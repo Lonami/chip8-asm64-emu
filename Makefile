@@ -8,7 +8,7 @@ debug:
 	gdb -q $(BINARY)
 
 run: build
-	./$(BINARY)
+	./$(BINARY) bin
 
 clean:
 	rm $(BINARY)

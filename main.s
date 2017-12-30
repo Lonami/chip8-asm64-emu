@@ -16,8 +16,18 @@
 	.comm rect, 8, 8     #; SDL_Rect
 	gameover: .byte 0    #; loop until game over
 
+	.set PROGRAM_SIZE, 0x1000
+	.comm program, PROGRAM_SIZE, 32
+	.comm fp, 8, 8
+
+	err: .space 8
+
 .section .rodata
 	title: .string "CHIP-8"
+	readmode: .string "rb"
+
+	err_wrongargs: .string "wrong argument count (must pass file to load)\n"
+	err_openfail: .string "failed to open file (does it exist?)\n"
 
 .text
 	.global main
@@ -25,6 +35,28 @@
 main:
 	push rbp
 	mov rbp, rsp
+
+	#; check we have enough arguments
+	lea rdx, err_wrongargs[rip]
+	mov err[rip], rdx
+	cmp rdi, 2
+	jne error
+
+	#; we do so pick the pointer to the 2nd string
+	mov rdi, 8[rsi]
+	lea rsi, readmode[rip]
+	call fopen@PLT
+	lea rdx, err_openfail[rip]
+	mov err[rip], rdx
+	test rax, rax
+	jz error
+
+	mov fp[rip], rax
+	lea rdi, program[rip]
+	mov rsi, PROGRAM_SIZE
+	mov rdx, 1
+	mov rcx, rax
+	call fread@PLT
 
 	mov edi, SDL_INIT_VIDEO
 	call SDL_Init@PLT
@@ -78,7 +110,17 @@ noevent:
 
 quit:
 	call SDL_Quit@PLT
+	jmp exit
 
+error:
+	mov rdi, err[rip]
+	xor rax, rax
+	call printf@PLT
+	mov eax, 1
+	jmp .exit
+
+exit:
 	mov eax, 0
+.exit:
 	leave
 	ret
