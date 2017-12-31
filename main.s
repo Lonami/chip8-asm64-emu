@@ -14,11 +14,19 @@
 	.comm screen, 8, 8   #; SDL_Surface* screen
 	.comm event, 24, 16  #; SDL_Event event
 	.comm rect, 8, 8     #; SDL_Rect
-	gameover: .byte 0    #; loop until game over
+
+	.set SCREEN_FILL, 0xff0000
 
 	.set PROGRAM_SIZE, 0x1000
 	.comm program, PROGRAM_SIZE, 32
 	.comm fp, 8, 8
+
+	.set STACK_SIZE, 48
+	.comm program_stack, STACK_SIZE
+
+	.set REG_COUNT, 16
+	program_regs: .zero REG_COUNT
+	program_regi: .zero 2
 
 	err: .space 8
 
@@ -31,6 +39,311 @@
 
 .text
 	.global main
+
+
+emulateprogram:
+	push rbx  #; program counter
+	push r12  #; stack pointer
+	push r13  #; register base
+	push r14  #; used when drawing
+	push r15  #; used when drawing
+	mov rbx, 0
+	lea r12, program_stack[rip]
+	lea r13, program_regs[rip]
+ep_loop:
+	lea rdi, event[rip]
+	call SDL_PollEvent@PLT
+	test eax, eax
+	jz ep_parseop
+
+	mov al, byte ptr event[rip]
+	cmp al, SDL_QUIT
+	je ep_quit
+ep_parseop:
+	lea rsi, program[rip]
+	xor rax, rax
+	mov ax, [rsi+rbx]
+	xchg ah, al  #; endianness
+	add rbx, 2
+	#; keep op to jump in rcx, mask it away from rax
+	xor rcx, rcx
+	mov cl, ah
+	shr cl, 4
+	and ah, 0x0f
+	lea rdx, ep_jumptable[rip]  #; base of jump table doesn't change
+	movsx rcx, dword ptr [rdx+rcx*4]  #; offset value
+	add rcx, rdx  #; add base to the offset value
+	jmp rcx  #; jump to it
+	.section	.rodata
+	.align 4
+ep_jumptable:
+	.long ep_op0 - ep_jumptable
+	.long ep_op1 - ep_jumptable
+	.long ep_op2 - ep_jumptable
+	.long ep_op3 - ep_jumptable
+	.long ep_op4 - ep_jumptable
+	.long ep_op5 - ep_jumptable
+	.long ep_op6 - ep_jumptable
+	.long ep_op7 - ep_jumptable
+	.long ep_op8 - ep_jumptable
+	.long ep_op9 - ep_jumptable
+	.long ep_opa - ep_jumptable
+	.long ep_opb - ep_jumptable
+	.long ep_opc - ep_jumptable
+	.long ep_opd - ep_jumptable
+	.long ep_ope - ep_jumptable
+	.long ep_opf - ep_jumptable
+	.text
+
+ep_op0:
+	jmp ep_loop
+ep_op1:
+	#; 1N:NN -> jump to NNN
+	mov rbx, rax
+	jmp ep_loop
+ep_op2:
+	#; 2N:NN -> call subroutine at NNN
+	mov [r12], bx
+	add r12, 2
+	mov rbx, rax
+	jmp ep_loop
+ep_op3:
+	#; 3X:NN -> skip next instruction if Vx == NN
+	xor rcx, rcx
+	mov cl, ah
+	mov dl, [r13+rcx]
+	cmp dl, al
+	jne ep_loop
+	add rbx, 2
+	jmp ep_loop
+ep_op4:
+	#; 4X:NN -> skip next instruction if Vx != NN
+	xor rcx, rcx
+	mov cl, ah
+	mov dl, [r13+rcx]
+	cmp dl, al
+	je ep_loop
+	add rbx, 2
+	jmp ep_loop
+ep_op5:
+	#; 5X:Y0 -> skip next instruction if Vx == Vy
+	xor rcx, rcx
+	mov cl, ah
+	mov dl, [r13+rcx]
+	mov cl, al
+	shr cl, 4
+	cmp dl, [r13+rcx]
+	jne ep_loop
+	add rbx, 2
+	jmp ep_loop
+ep_op6:
+	#; 6X:NN -> set Vx to NN
+	xor rcx, rcx
+	mov cl, ah
+	mov [r13+rcx], al
+	jmp ep_loop
+ep_op7:
+	#; 7X:NN -> Vx += NN, do NOT modify carry flag
+	xor rcx, rcx
+	mov cl, ah
+	add [r13+rcx], al
+	jmp ep_loop
+ep_op8:
+	#; 8X:YZ -> save to Vx after operate with Vy
+	#; 		Z = 0 -> MOV
+	#; 		Z = 1 -> OR
+	#; 		Z = 2 -> AND
+	#; 		Z = 3 -> XOR
+	#; 		Z = 4 -> ADD (VF = carry)
+	#; 		Z = 5 -> SUB (VF = !borrow)
+	#;		Z = 6 -> (VF least significant bit); Vx = Vy = (Vy >> 1)
+	#;      Z = 7 -> Vy -= Vx, note swapped (VF = !borrow)
+	#;		Z = E -> (VF most significant bit); Vx = Vy = (Vy << 1)
+	xor r8, r8
+	xor r9, r9
+	xor rcx, rcx
+	mov cl, ah
+	mov r8b, [r13+rcx]
+	xor rdx, rdx
+	mov dl, al
+	shr dl, 4
+	cmp r9b, [r13+rdx]
+
+	#; keep op to jump in r10, mask it away from rax
+	xor r10, r10
+	mov r10w, ax  #; r10b <- ah
+	shr r10w, 8+4
+	lea rax, ep_jt8[rip]  #; base of jump table doesn't change
+	movsx r10, dword ptr [rax+r10*4]  #; offset value
+	add r10, rax  #; add base to the offset value
+	jmp r10  #; jump to it
+	.section	.rodata
+	.align 4
+ep_jt8:
+	.long ep_op80 - ep_jt8
+	.long ep_op81 - ep_jt8
+	.long ep_op82 - ep_jt8
+	.long ep_op83 - ep_jt8
+	.long ep_op84 - ep_jt8
+	.long ep_op85 - ep_jt8
+	.long ep_op86 - ep_jt8
+	.long ep_op87 - ep_jt8
+	.long ep_loop - ep_jt8
+	.long ep_loop - ep_jt8
+	.long ep_loop - ep_jt8
+	.long ep_loop - ep_jt8
+	.long ep_loop - ep_jt8
+	.long ep_loop - ep_jt8
+	.long ep_op8e - ep_jt8
+	.long ep_loop - ep_jt8
+	.text
+	#; TODO setting all kind of flags is missing!
+	ep_op80:
+		mov [r13+rcx], r9b
+		jmp ep_loop
+	ep_op81:
+		or [r13+rcx], r9b
+		jmp ep_loop
+	ep_op82:
+		and [r13+rcx], r9b
+		jmp ep_loop
+	ep_op83:
+		xor [r13+rcx], r9b
+		jmp ep_loop
+	ep_op84:
+		add [r13+rcx], r9b
+		jmp ep_loop
+	ep_op85:
+		sub [r13+rcx], r9b
+		jmp ep_loop
+	ep_op86:
+		shr r9b
+		mov [r13+rcx], r9b
+		mov [r13+rdx], r9b
+		jmp ep_loop
+	ep_op87:
+		sub [r13+rdx], r8b
+		jmp ep_loop
+	ep_op8e:
+		shl r9b
+		mov [r13+rcx], r9b
+		mov [r13+rdx], r9b
+		jmp ep_loop
+
+ep_op9:
+	#; 9X:Y0 -> skip next instruction if Vx != Vy
+	xor rcx, rcx
+	mov cl, ah
+	mov dl, [r13+rcx]
+	mov cl, al
+	shr cl, 8
+	cmp dl, [r13+rcx]
+	je ep_loop
+	add rbx, 2
+	jmp ep_loop
+ep_opa:
+	#; AN:NN -> set reg I to NNN
+	mov program_regi[rip], ax
+	jmp ep_loop
+ep_opb:
+	#; BN:NN -> jump to V0+NNN
+	xor rcx, rcx
+	mov cl, 0[r13]
+	add ax, cx
+	mov bx, ax
+	jmp ep_loop
+ep_opc:
+	#; CX:NN -> Vx = rand() & NN
+	push rax
+	call rand@PLT
+	mov rdx, rax
+	pop rax
+	and dl, al
+	xor rcx, rcx
+	mov cl, ah
+	mov [r13+rcx], dl
+	jmp ep_loop
+ep_opd:
+	#; DX:YN -> draw(coord x = Vx, coord y = Vy, height = N), width = 8
+	push r12  #; r12 = N left (row loop)
+	push r13  #; r13 = I pointer
+	xor r14, r14  #; r14b = Vx
+	xor r15, r15  #; r15b = Vy
+	xor rcx, rcx
+	mov cl, ah
+	mov r14b, [r13+rcx]
+	mov cl, al
+	shr cl, 8
+	mov r15b, [r13+rcx]
+	#; prepare to draw
+	xor r13, r13
+	mov r13w, program_regi[rip]
+	xor r12, r12
+	mov r12b, al
+	and r12b, 0x0f
+	test r12b, r12b
+	jz ep_drawdone
+	#; scaling
+	mov rcx, PX_MULT
+	xor rdx, rdx
+	mov rax, r14
+	mul rcx
+	mov r14, rax
+	mov rax, r15
+	mul rcx
+	mov r15, rax
+	#; set initial position
+	mov word ptr rect[rip+0], r14w  #; x
+	mov word ptr rect[rip+2], r15w  #; y
+	mov word ptr rect[rip+4], PX_MULT  #; width
+	mov word ptr rect[rip+6], PX_MULT  #; height
+	ep_drawrow:
+		mov r15b, [r13]  #; r15 now becomes pixels to draw
+		inc r13
+		mov r14b, 8  #; r14b now becomes x counter
+		add word ptr rect[rip], 8*PX_MULT
+		#; we will be drawing backward as it's easier
+		ep_drawpx:
+			sub word ptr rect[rip], PX_MULT
+			test r15b, 1
+			jz ep_drawnext
+			mov rdi, screen[rip]
+			lea rsi, rect[rip]
+			mov edx, SCREEN_FILL
+			call SDL_FillRect@PLT
+		ep_drawnext:
+			shr r15b
+			dec r14b
+			jnz ep_drawpx
+		#; next row
+		add word ptr rect[rip+2], PX_MULT
+		dec r12b
+		jnz ep_drawrow
+ep_drawdone:
+	pop r13
+	pop r12
+
+	#; TODO can probably do better than this
+	mov rdi, screen[rip]
+	mov esi, 0
+	mov edx, 0
+	mov ecx, 0
+	mov r8d, 0
+	call SDL_UpdateRect@PLT
+	jmp ep_loop
+ep_ope:
+	jmp ep_loop
+ep_opf:
+	jmp ep_loop
+
+ep_quit:
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop rbx
+	ret
+
 
 main:
 	push rbp
@@ -58,6 +371,13 @@ main:
 	mov rcx, rax
 	call fread@PLT
 
+	#; init rng
+	mov edi, 0
+	xor eax, eax
+	call time@PLT
+	mov edi, eax
+	call srand@PLT
+
 	mov edi, SDL_INIT_VIDEO
 	call SDL_Init@PLT
 
@@ -77,38 +397,7 @@ main:
 	mov word ptr rect[rip+4], 48*PX_MULT
 	mov word ptr rect[rip+6], 24*PX_MULT
 
-renderloop:
-	lea rdi, event[rip]
-	call SDL_PollEvent@PLT
-	test eax, eax
-	je noevent
-
-	mov al, byte ptr event[rip]
-	cmp al, SDL_QUIT
-	sete al
-	mov gameover[rip], al
-noevent:
-	mov rdi, screen[rip]
-	mov esi, 0  #; no rect
-	mov edx, 0x000000
-	call SDL_FillRect@PLT
-
-	mov rdi, screen[rip]
-	lea rsi, rect[rip]
-	mov edx, 0xff0000
-	call SDL_FillRect@PLT
-
-	mov rdi, screen[rip]
-	mov esi, 0
-	mov edx, 0
-	mov ecx, 0
-	mov r8d, 0
-	call SDL_UpdateRect@PLT
-.L2:
-	test byte ptr gameover[rip], 1
-	jz renderloop
-
-quit:
+	call emulateprogram
 	call SDL_Quit@PLT
 	jmp exit
 
