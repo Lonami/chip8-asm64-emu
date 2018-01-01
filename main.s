@@ -206,7 +206,6 @@ ep_jt8:
 	.long ep_op8e - ep_jt8
 	.long ep_loop - ep_jt8
 	.text
-	#; TODO setting all kind of flags is missing!
 	ep_op80:
 		mov [r13+rcx], r9b
 		jmp ep_loop
@@ -221,20 +220,25 @@ ep_jt8:
 		jmp ep_loop
 	ep_op84:
 		add [r13+rcx], r9b
+		setc byte ptr 0xf[r13]  #; set VF if carry
 		jmp ep_loop
 	ep_op85:
 		sub [r13+rcx], r9b
+		setnc byte ptr 0xf[r13]  #; set VF if NOT borrow (carry)
 		jmp ep_loop
 	ep_op86:
 		shr r9b
+		setc byte ptr 0xf[r13]  #; set VF to the bit shifted out
 		mov [r13+rcx], r9b
 		mov [r13+rdx], r9b
 		jmp ep_loop
 	ep_op87:
 		sub [r13+rdx], r8b
+		setnc byte ptr 0xf[r13]  #; set VF if NOT borrow (carry)
 		jmp ep_loop
 	ep_op8e:
 		shl r9b
+		setc byte ptr 0xf[r13]  #; set VF to the bit shifted out
 		mov [r13+rcx], r9b
 		mov [r13+rdx], r9b
 		jmp ep_loop
@@ -428,6 +432,8 @@ ep_opf:
 		jne ep_loop
 		ep_opf1e:
 			add program_regi[rip], ax
+			cmp word ptr program_regi[rip], 0xfff
+			seta byte ptr 0xf[r13]  #; set VF if bound overflow (above)
 			jmp ep_loop
 		ep_opf15:
 			mov program_delay_timer[rip], al
