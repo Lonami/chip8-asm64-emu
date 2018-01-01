@@ -17,6 +17,7 @@
 	.comm rect, 8, 8     #; SDL_Rect
 
 	.set SCREEN_FILL, 0xff0000
+	.set SCREEN_CLEAR, 0x00ffff
 
 	.set PROGRAM_SIZE, 0x1000
 	.comm program, PROGRAM_SIZE, 32
@@ -48,8 +49,8 @@ emulateprogram:
 	push rbx  #; program counter
 	push r12  #; stack pointer
 	push r13  #; register base
-	push r14  #; used when drawing
-	push r15  #; used when drawing
+	push r14  #; preserved but temporary
+	push r15  #; preserved but temporary
 	mov rbx, 0
 	lea r12, program_stack[rip]
 	lea r13, program_regs[rip]
@@ -69,8 +70,7 @@ ep_loop:
 	mov r8d, DWORD PTR event[rip+8]
 ep_parseop:
 	lea rsi, program[rip]
-	xor rax, rax
-	mov ax, [rsi+rbx]
+	movzx rax, word ptr [rsi+rbx]
 	xchg ah, al  #; endianness
 	add rbx, 2
 	#; keep op to jump in rcx, mask it away from rax
@@ -108,13 +108,13 @@ ep_op0:
 	jmp ep_loop
 ep_op1:
 	#; 1N:NN -> jump to NNN
-	mov rbx, rax
+	mov bx, ax
 	jmp ep_loop
 ep_op2:
 	#; 2N:NN -> call subroutine at NNN
 	mov [r12], bx
 	add r12, 2
-	mov rbx, rax
+	mov bx, ax
 	jmp ep_loop
 ep_op3:
 	#; 3X:NN -> skip next instruction if Vx == NN
@@ -274,63 +274,63 @@ ep_opc:
 	jmp ep_loop
 ep_opd:
 	#; DX:YN -> draw(coord x = Vx, coord y = Vy, height = N), width = 8
-	push r12  #; r12 = N left (row loop)
-	push r13  #; r13 = I pointer
-	xor r14, r14  #; r14b = Vx
-	xor r15, r15  #; r15b = Vy
+	#; r14b will hold how many rows we need to do
+	#; r15b will hold the item we're drawing
 	xor rcx, rcx
 	mov cl, ah
-	mov r14b, [r13+rcx]
+	xor r8, r8
+	mov r8b, [r13+rcx]  #; r8b = x for now
 	mov cl, al
-	shr cl, 8
-	mov r15b, [r13+rcx]
-	#; prepare to draw
-	xor r13, r13
-	mov r13w, program_regi[rip]
-	xor r12, r12
-	mov r12b, al
-	and r12b, 0x0f
-	test r12b, r12b
-	jz ep_drawdone
-	#; scaling
-	mov rcx, PX_MULT
-	xor rdx, rdx
-	mov rax, r14
-	mul rcx
-	mov r14, rax
-	mov rax, r15
-	mul rcx
-	mov r15, rax
-	#; set initial position
-	mov word ptr rect[rip+0], r14w  #; x
-	mov word ptr rect[rip+2], r15w  #; y
+	shr cl, 4
+	xor r9, r9
+	mov r9b, [r13+rcx]  #; r9b = y for now
+	mov r14b, al
+	and r14b, 0x0f  #; r14b holds N
+	#; set the rect position
+	xor dx, dx
+	xor ax, ax
+	mov al, r8b
+	mov cx, PX_MULT
+	mov word ptr rect[rip+0], ax  #; x
+	xor dx, dx
+	xor ax, ax
+	mov al, r9b
+	mov cx, PX_MULT
+	mov word ptr rect[rip+2], ax  #; y
 	mov word ptr rect[rip+4], PX_MULT  #; width
 	mov word ptr rect[rip+6], PX_MULT  #; height
+	push rbx  #; rbx holds what to read
+	push r12  #; r12b counts from 8 to 0
+	movzx rbx, word ptr program_regi[rip]
 	ep_drawrow:
-		mov r15b, [r13]  #; r15 now becomes pixels to draw
-		inc r13
-		mov r14b, 8  #; r14b now becomes x counter
+		lea rsi, program[rip]
+		mov r15b, [rsi+rbx]
+		inc bx
+		mov r12b, 8
 		add word ptr rect[rip], 8*PX_MULT
 		#; we will be drawing backward as it's easier
 		ep_drawpx:
 			sub word ptr rect[rip], PX_MULT
-			test r15b, 1
-			jz ep_drawnext
 			mov rdi, screen[rip]
 			lea rsi, rect[rip]
+			test r15b, 1
+			jz ep_drawclear
 			mov edx, SCREEN_FILL
-			call SDL_FillRect@PLT
+			jmp ep_drawnext
+		ep_drawclear:
+			mov edx, SCREEN_CLEAR
 		ep_drawnext:
+			call SDL_FillRect@PLT
 			shr r15b
-			dec r14b
+			dec r12b
 			jnz ep_drawpx
 		#; next row
 		add word ptr rect[rip+2], PX_MULT
-		dec r12b
+		dec r14b
 		jnz ep_drawrow
 ep_drawdone:
-	pop r13
 	pop r12
+	pop rbx
 
 	#; TODO can probably do better than this
 	mov rdi, screen[rip]
