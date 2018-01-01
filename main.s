@@ -7,6 +7,7 @@
 	.set BITS_PER_PX, 0
 	.set VIDEO_FLAGS, 0
 
+	.set SDL_KEYDOWN, 2
 	.set SDL_QUIT, 12
 	.set SDL_INIT_VIDEO, 32
 
@@ -27,6 +28,8 @@
 	.set REG_COUNT, 16
 	program_regs: .zero REG_COUNT
 	program_regi: .zero 2
+	program_delay_timer: .zero 1
+	program_sound_timer: .zero 1
 
 	err: .space 8
 
@@ -53,12 +56,17 @@ emulateprogram:
 ep_loop:
 	lea rdi, event[rip]
 	call SDL_PollEvent@PLT
+	xor r8, r8  #; r8 holds the key pressed if any
 	test eax, eax
 	jz ep_parseop
 
 	mov al, byte ptr event[rip]
 	cmp al, SDL_QUIT
 	je ep_quit
+
+	cmp al, SDL_KEYDOWN
+	jne ep_parseop
+	mov r8d, DWORD PTR event[rip+8]
 ep_parseop:
 	lea rsi, program[rip]
 	xor rax, rax
@@ -73,6 +81,7 @@ ep_parseop:
 	lea rdx, ep_jumptable[rip]  #; base of jump table doesn't change
 	movsx rcx, dword ptr [rdx+rcx*4]  #; offset value
 	add rcx, rdx  #; add base to the offset value
+	mov rdx, r8  #; key pressed in rdx
 	jmp rcx  #; jump to it
 	.section	.rodata
 	.align 4
@@ -332,10 +341,130 @@ ep_drawdone:
 	call SDL_UpdateRect@PLT
 	jmp ep_loop
 ep_ope:
+	#; EX:[9E|A1]
+	xor rcx, rcx
+	mov cl, ah
+	mov cl, [r13+rcx]
+	cmp al, 0x9e
+	je ep_opex9e
+	cmp al, 0xa1
+	jne ep_loop
+ep_opexa1:
+	#; skip next instruction if key() != Vx
+	cmp dl, cl
+	je ep_loop
+	add rbx, 2
 	jmp ep_loop
-ep_opf:
+ep_opex9e:
+	#; skip next instruction if key() == Vx
+	cmp dl, cl
+	jne ep_loop
+	add rbx, 2
 	jmp ep_loop
 
+ep_opf:
+	#; FX:IJ
+	#;   if I = 0:
+	#;     if J = 7: Vx = get_delay()
+	#;     if J = A: Vx = get_key() (blocking)
+	#;   if I = 1:
+	#;     if J = 5: delay_timer(Vx)
+	#;     if J = 8: sound_timer(Vx)
+	#;     if J = E: I += Vx
+	#;   if I = 2, J = 9: I = sprite_addr[Vx], characters in 4x5 font
+	#;     if J = 9
+	#;   if I = J = 3: set_BCD(Vx), at I -> I hundred, I+1 tens, I+2 digit
+	#;   IF I = J = 5: store from V0 to Vx inclusive into I, increasing I
+	#;   IF I = 6, J = 5: load to V0 to Vx inclusive from I, increasing I
+	xor rcx, rcx
+	mov cl, ah  #; [r13+rcx] = register
+	mov r8b, al
+	shr r8b, 4
+	mov r9b, al
+	and r9b, 0x0f
+	cmp r8b, 0
+	je ep_opf0
+	cmp r8b, 1
+	je ep_opf1
+	cmp r8b, 2
+	je ep_opf2
+	cmp r8b, 3
+	je ep_opf3
+	cmp r8b, 5
+	je ep_opf5
+	cmp r8b, 6
+	jne ep_loop
+	ep_opf6:
+		cmp r9b, 0x05
+		jne ep_loop
+		#; load registers into V0 to Vx
+		movzx rax, word ptr program_regi[rip]
+		lea rsi, program[rip]
+		add rsi, rax
+		lea rdi, program_regs[rip]
+		add word ptr program_regi[rip], cx
+		rep movsb
+		jmp ep_loop
+
+	ep_opf0:
+		cmp r9b, 0x07
+		je ep_opf07
+		cmp r9b, 0x0a
+		jne ep_loop
+		ep_opf0a:
+			#;SDL_WaitEvent
+			jmp ep_loop
+		ep_opf07:
+			mov al, program_delay_timer[rip]
+			mov [r13+rcx], al
+			jmp ep_loop
+	ep_opf1:
+		movzx ax, byte ptr [r13+rcx]
+		cmp r9b, 0x05
+		je ep_opf15
+		cmp r9b, 0x08
+		je ep_opf18
+		cmp r9b, 0x0e
+		jne ep_loop
+		ep_opf1e:
+			add program_regi[rip], ax
+			jmp ep_loop
+		ep_opf15:
+			mov program_delay_timer[rip], al
+			jmp ep_loop
+		ep_opf18:
+			mov program_sound_timer[rip], al
+			jmp ep_loop
+	ep_opf2:
+		cmp r9b, 0x09
+		jne ep_loop
+		#; TODO I = sprite_addr[Vx]
+		jmp ep_loop
+	ep_opf3:
+		cmp r9b, 0x03
+		jne ep_loop
+		movzx ax, byte ptr [r13+rcx]
+		xor dx, dx
+		mov cx, 100
+		div cx
+		mov program_regi[rip+0], al
+		mov ax, dx
+		mov cx, 10
+		div cx
+		mov program_regi[rip+1], al
+		mov program_regi[rip+2], dl
+		jmp ep_loop
+	ep_opf5:
+		cmp r9b, 0x05
+		jne ep_loop
+		#; dump registers from V0 to Vx
+		lea rsi, program_regs[rip]
+		movzx rax, word ptr program_regi[rip]
+		lea rdi, program[rip]
+		add rdi, rax
+		add word ptr program_regi[rip], cx
+		rep movsb
+		jmp ep_loop
 ep_quit:
 	pop r15
 	pop r14
