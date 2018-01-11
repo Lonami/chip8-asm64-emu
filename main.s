@@ -14,8 +14,8 @@
 	.comm event, 24, 16  #; SDL_Event event
 	.comm rect, 8, 8     #; SDL_Rect
 
-	.set SCREEN_FILL, 0xff0000
-	.set SCREEN_CLEAR, 0x00ffff
+	.set SCREEN_FILL, 0xffffff
+	.set SCREEN_CLEAR, 0x000000
 
 	.set PROGRAM_SIZE, 0x1000
 	.set PROGRAM_START, 0x200
@@ -71,6 +71,7 @@
 drawbuffer:
 	push rbx  #; counter 0 -> 32
 	push r12  #; counter 64 -> 0
+	push r15  #; what we'll be drawing
 	mov word ptr rect[rip+4], PX_MULT  #; width
 	mov word ptr rect[rip+6], PX_MULT  #; height
 	#; each of the 32 rows fits in a 64 bit register
@@ -80,14 +81,14 @@ drawbuffer:
 	mov word ptr rect[rip+2], 0
 	db_loop:
 		lea rsi, screenbuffer[rip]
-		mov rax, [rsi+rbx*8]
+		mov r15, [rsi+rbx*8]
 		mov r12, 64
 		#; x = 63
 		mov word ptr rect[rip+0], 63*PX_MULT
 		db_shiftloop:
 			mov edx, SCREEN_CLEAR
 			mov ecx, SCREEN_FILL
-			shr rax
+			shr r15
 			cmovc edx, ecx  #; there's carry if we shifted a set bit
 			mov rdi, screen[rip]
 			lea rsi, rect[rip]
@@ -108,6 +109,7 @@ drawbuffer:
 	mov ecx, 0
 	mov r8d, 0
 	call SDL_UpdateRect@PLT
+	pop r15
 	pop r12
 	pop rbx
 	ret
@@ -365,21 +367,27 @@ ep_opd:
 	#; TODO VF = 1 if any bit erased
 	#;      out of bounds should wraps to the other side of the screen wrong
 	#;
+	#; r8b, r9b = Vx, Vy
+	xor rcx, rcx
+	mov cl, ah
+	mov r8b, [r13+rcx]
+	mov cl, al
+	shr cl, 4
+	mov r9b, [r13+rcx]
 	#; set up rsi -> program[reg_i]
 	lea rsi, program[rip]
 	movzx rdx, word ptr program_regi[rip]
 	add rsi, rdx
 	#; now position rdi -> screenbuffer[y * 8]
 	lea rdi, screenbuffer[rip]
-	movzx rdx, al
-	and dl, 0xf0
-	shr dl  #; 16 / 2 = 8, required multiplier
+	movzx rdx, r9b
+	shl rdx, 3
 	add rdi, rdx
 	#; ch = n
 	mov ch, al
 	and ch, 0x0f
 	#; cl = x
-	mov cl, ah
+	mov cl, r8b
 ep_opdrawloop:
 	#; since screenbuffer works with bits, we'll load data into al
 	#; then rotate 8 so it starts at offset 0, then rotate until x
