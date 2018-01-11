@@ -53,6 +53,8 @@
 	program_delay_timer: .zero 1
 	program_sound_timer: .zero 1
 
+	lastkey: .byte
+
 	err: .space 8
 
 .section .rodata
@@ -66,7 +68,8 @@
 	.global main
 
 
-#; eax = read key (0 if nothing, -1 if quit event)
+#; ah = event (SDL_QUIT/SDL_KEYDOWN)
+#; al = mapped key pressed, if any
 getkeylock:
 	push rbp
 	mov rbp, rsp
@@ -81,18 +84,105 @@ getkey:
 	call SDL_PollEvent@PLT
 gk_process:
 	test eax, eax
-	jz gk_done
-	mov dl, byte ptr event[rip]
-	#; First check if event is quit
-	mov eax, -1
-	cmp dl, SDL_QUIT
-	je gk_done
-	#; Then if it was keydown
-	mov eax, 0
-	cmp dl, SDL_KEYDOWN
-	jne gk_done
-	mov eax, event[rip+8]
+	jz gk_exit
+	mov ah, byte ptr event[rip]
+	mov edx, event[rip+8]
+	mov al, dl
+	#; Map the key in al to the right one, if applicable. Otherwise, no event.
+	cmp al, 'Z'
+	jle gk_isupper
+	sub al, 'a' - 'A'
+gk_isupper:
+	#; 1 2 3 4  ->  1 2 3 C
+	cmp al, '1'
+	je gk_key1
+	cmp al, '2'
+	je gk_key2
+	cmp al, '3'
+	je gk_key3
+	cmp al, '4'
+	je gk_keyc
+	#; Q W E R  ->  4 5 6 D
+	cmp al, 'Q'
+	je gk_key4
+	cmp al, 'W'
+	je gk_key5
+	cmp al, 'E'
+	je gk_key6
+	cmp al, 'R'
+	je gk_keyd
+	#; A S D F  ->  7 8 9 E
+	cmp al, 'A'
+	je gk_key7
+	cmp al, 'S'
+	je gk_key8
+	cmp al, 'D'
+	je gk_key9
+	cmp al, 'F'
+	je gk_keye
+	#; Z X C V  ->  A 0 B F
+	cmp al, 'Z'
+	je gk_keya
+	cmp al, 'X'
+	je gk_key0
+	cmp al, 'C'
+	je gk_keyb
+	cmp al, 'V'
+	je gk_keyf
+	#; no valid key pressed, consider no event
+	mov ah, 0
+	jmp gk_done
+gk_key0:
+	mov al, 0x0
+	jmp gk_done
+gk_key1:
+	mov al, 0x1
+	jmp gk_done
+gk_key2:
+	mov al, 0x2
+	jmp gk_done
+gk_key3:
+	mov al, 0x3
+	jmp gk_done
+gk_key4:
+	mov al, 0x4
+	jmp gk_done
+gk_key5:
+	mov al, 0x5
+	jmp gk_done
+gk_key6:
+	mov al, 0x6
+	jmp gk_done
+gk_key7:
+	mov al, 0x7
+	jmp gk_done
+gk_key8:
+	mov al, 0x8
+	jmp gk_done
+gk_key9:
+	mov al, 0x9
+	jmp gk_done
+gk_keya:
+	mov al, 0xa
+	jmp gk_done
+gk_keyb:
+	mov al, 0xb
+	jmp gk_done
+gk_keyc:
+	mov al, 0xc
+	jmp gk_done
+gk_keyd:
+	mov al, 0xd
+	jmp gk_done
+gk_keye:
+	mov al, 0xe
+	jmp gk_done
+gk_keyf:
+	mov al, 0xf
+	jmp gk_done
 gk_done:
+	mov lastkey[rip], al
+gk_exit:
 	leave
 	ret
 
@@ -156,10 +246,10 @@ emulateprogram:
 	lea r13, program_regs[rip]
 ep_loop:
 	call getkey@PLT
-	cmp eax, -1
+	cmp ah, SDL_QUIT
 	je ep_quit
 	xor r8, r8  #; r8 holds the key pressed if any
-	mov r8d, eax
+	mov r8b, al
 ep_parseop:
 	lea rsi, program[rip]
 	movzx rax, word ptr [rsi+rbx]
@@ -440,13 +530,13 @@ ep_ope:
 	jne ep_loop
 ep_opexa1:
 	#; Ex:9E - SKP Vx. Skip next instruction if key pressed = value of Vx.
-	cmp dl, cl
+	cmp r8b, cl
 	je ep_loop
 	add rbx, 2
 	jmp ep_loop
 ep_opex9e:
 	#; Ex:A1 - SKNP Vx. Skip next instruction if key pressed != value of Vx.
-	cmp dl, cl
+	cmp r8b, cl
 	jne ep_loop
 	add rbx, 2
 	jmp ep_loop
@@ -491,12 +581,15 @@ ep_opf:
 		jne ep_loop
 		ep_opf0a:
 			#; Fx:0A - LD Vx, K. Vx = wait for key press.
+			push rcx
+		ep_opf0a_getkey:
 			call getkeylock
-			cmp eax, -1
+			cmp ah, SDL_QUIT
 			je ep_quit
-			test eax, eax
-			jz ep_opf0a
-			#; TODO use the key from eax, which was pressed
+			cmp ah, SDL_KEYDOWN
+			jne ep_opf0a_getkey
+			pop rcx
+			mov [r13+rcx], al
 			jmp ep_loop
 		ep_opf07:
 			#; Fx:07 - LD Vx, DT. Set Vx = delay timer value.
