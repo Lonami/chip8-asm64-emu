@@ -335,7 +335,7 @@ ep_op9:
 	mov cl, ah
 	mov dl, [r13+rcx]
 	mov cl, al
-	shr cl, 8
+	shr cl, 4
 	cmp dl, [r13+rcx]
 	je ep_loop
 	add rbx, 2
