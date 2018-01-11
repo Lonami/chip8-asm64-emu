@@ -508,6 +508,7 @@ ep_opf:
 		div cx
 		mov program_regi[rip+0], al
 		mov ax, dx
+		xor dx, dx
 		mov cx, 10
 		div cx
 		mov program_regi[rip+1], al
