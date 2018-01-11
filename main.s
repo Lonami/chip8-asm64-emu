@@ -2,8 +2,6 @@
 
 .data
 	.set PX_MULT, 16
-	.set SCREEN_WIDTH, 64*PX_MULT
-	.set SCREEN_HEIGHT, 32*PX_MULT
 	.set BITS_PER_PX, 0
 	.set VIDEO_FLAGS, 0
 
@@ -40,6 +38,9 @@
 		.byte 0xF0, 0x80, 0xF0, 0x80, 0x80  #; F
 		.zero PROGRAM_SIZE - 0x50
 
+	screenbuffer: .zero 0x100  #; (64*32)/8 -> 256
+	.zero 8  #; extra padding, wrap around not emulated perfectly yet...
+
 	#; file pointer
 	.comm fp, 8, 8
 
@@ -63,6 +64,53 @@
 
 .text
 	.global main
+
+
+
+#; draws the screen buffer
+drawbuffer:
+	push rbx  #; counter 0 -> 32
+	push r12  #; counter 64 -> 0
+	mov word ptr rect[rip+4], PX_MULT  #; width
+	mov word ptr rect[rip+6], PX_MULT  #; height
+	#; each of the 32 rows fits in a 64 bit register
+	#; that is we iterate 32 times reading 64 bits (width)
+	xor rbx, rbx
+	#; y = 0
+	mov word ptr rect[rip+2], 0
+	db_loop:
+		lea rsi, screenbuffer[rip]
+		mov rax, [rsi+rbx*8]
+		mov r12, 64
+		#; x = 63
+		mov word ptr rect[rip+0], 63*PX_MULT
+		db_shiftloop:
+			mov edx, SCREEN_CLEAR
+			mov ecx, SCREEN_FILL
+			shr rax
+			cmovc edx, ecx  #; there's carry if we shifted a set bit
+			mov rdi, screen[rip]
+			lea rsi, rect[rip]
+			call SDL_FillRect@PLT
+			#; x -= 1
+			sub word ptr rect[rip+0], PX_MULT
+			dec r12
+			jnz db_shiftloop
+		#; y += 1
+		add word ptr rect[rip+2], PX_MULT
+		inc rbx
+		cmp rbx, 32
+		jne db_loop
+	#; update everything
+	mov rdi, screen[rip]
+	mov esi, 0
+	mov edx, 0
+	mov ecx, 0
+	mov r8d, 0
+	call SDL_UpdateRect@PLT
+	pop r12
+	pop rbx
+	ret
 
 
 emulateprogram:
@@ -136,14 +184,11 @@ ep_op0:
 		jmp ep_loop
 	ep_op0e0:
 		#; 00:E0 -> clear display
-		mov word ptr rect[rip+0], 0  #; x
-		mov word ptr rect[rip+2], 0  #; y
-		mov word ptr rect[rip+4], SCREEN_WIDTH  #; width
-		mov word ptr rect[rip+6], SCREEN_HEIGHT  #; height
-		mov rdi, screen[rip]
-		lea rsi, rect[rip]
-		mov edx, SCREEN_CLEAR
-		call SDL_FillRect@PLT
+		lea rdi, screenbuffer[rip]
+		xor rax, rax
+		mov rcx, 32
+		rep stosq
+		call drawbuffer
 		jmp ep_loop
 ep_op1:
 	#; 1N:NN -> jump to NNN
@@ -317,75 +362,41 @@ ep_opc:
 	jmp ep_loop
 ep_opd:
 	#; DX:YN -> draw(coord x = Vx, coord y = Vy, height = N), width = 8
-	#; r14b will hold how many rows we need to do
-	#; r15b will hold the item we're drawing
-	#; TODO this should XOR sprites into the screen
-	#;      VF = 1 if any bit erased
-	#;      out of bounds should wrap to the other side of the screen
-	xor rcx, rcx
+	#; TODO VF = 1 if any bit erased
+	#;      out of bounds should wraps to the other side of the screen wrong
+	#;
+	#; set up rsi -> program[reg_i]
+	lea rsi, program[rip]
+	movzx rdx, word ptr program_regi[rip]
+	add rsi, rdx
+	#; now position rdi -> screenbuffer[y * 8]
+	lea rdi, screenbuffer[rip]
+	movzx rdx, al
+	and dl, 0xf0
+	shr dl  #; 16 / 2 = 8, required multiplier
+	add rdi, rdx
+	#; ch = n
+	mov ch, al
+	and ch, 0x0f
+	#; cl = x
 	mov cl, ah
-	xor r8, r8
-	mov r8b, [r13+rcx]  #; r8b = x for now
-	mov cl, al
-	shr cl, 4
-	xor r9, r9
-	mov r9b, [r13+rcx]  #; r9b = y for now
-	mov r14b, al
-	and r14b, 0x0f  #; r14b holds N
-	#; set the rect position
-	xor dx, dx
-	xor ax, ax
-	mov al, r8b
-	mov cx, PX_MULT
-	mov word ptr rect[rip+0], ax  #; x
-	xor dx, dx
-	xor ax, ax
-	mov al, r9b
-	mov cx, PX_MULT
-	mov word ptr rect[rip+2], ax  #; y
-	mov word ptr rect[rip+4], PX_MULT  #; width
-	mov word ptr rect[rip+6], PX_MULT  #; height
-	push rbx  #; rbx holds what to read
-	push r12  #; r12b counts from 8 to 0
-	movzx rbx, word ptr program_regi[rip]
-	ep_drawrow:
-		lea rsi, program[rip]
-		mov r15b, [rsi+rbx]
-		inc bx
-		mov r12b, 8
-		add word ptr rect[rip], 8*PX_MULT
-		#; we will be drawing backward as it's easier
-		ep_drawpx:
-			sub word ptr rect[rip], PX_MULT
-			mov rdi, screen[rip]
-			lea rsi, rect[rip]
-			test r15b, 1
-			jz ep_drawclear
-			mov edx, SCREEN_FILL
-			jmp ep_drawnext
-		ep_drawclear:
-			mov edx, SCREEN_CLEAR
-		ep_drawnext:
-			call SDL_FillRect@PLT
-			shr r15b
-			dec r12b
-			jnz ep_drawpx
-		#; next row
-		add word ptr rect[rip+2], PX_MULT
-		dec r14b
-		jnz ep_drawrow
-ep_drawdone:
-	pop r12
-	pop rbx
-
-	#; TODO can probably do better than this
-	mov rdi, screen[rip]
-	mov esi, 0
-	mov edx, 0
-	mov ecx, 0
-	mov r8d, 0
-	call SDL_UpdateRect@PLT
+ep_opdrawloop:
+	#; since screenbuffer works with bits, we'll load data into al
+	#; then rotate 8 so it starts at offset 0, then rotate until x
+	xor rax, rax
+	lodsb
+	#; rotate so the data is at "position" 0 in the register
+	ror rax, 8
+	#; then rotate by the extra "x" to actually position it
+	ror rax, cl
+	xor [rdi], rax
+	add rdi, 8
+	dec ch
+	jnz ep_opdrawloop
+	#; draw the new buffer
+	call drawbuffer
 	jmp ep_loop
+
 ep_ope:
 	#; EX:[9E|A1]
 	xor rcx, rcx
@@ -562,17 +573,12 @@ main:
 	lea rdi, title[rip]
 	call SDL_WM_SetCaption@PLT
 
-	mov edi, SCREEN_WIDTH
-	mov esi, SCREEN_HEIGHT
+	mov edi, 64*PX_MULT
+	mov esi, 32*PX_MULT
 	mov edx, BITS_PER_PX
 	mov ecx, VIDEO_FLAGS
 	call SDL_SetVideoMode@PLT
 	mov screen[rip], rax
-
-	mov word ptr rect[rip], 8*PX_MULT
-	mov word ptr rect[rip+2], 4*PX_MULT
-	mov word ptr rect[rip+4], 48*PX_MULT
-	mov word ptr rect[rip+6], 24*PX_MULT
 
 	call emulateprogram
 	call SDL_Quit@PLT
