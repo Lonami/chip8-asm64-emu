@@ -180,12 +180,12 @@ ep_op0:
 	cmp al, 0xee
 	jne ep_loop
 	ep_op0ee:
-		#; 00:EE -> return
+		#; 00:E0 - RET. Return from a subroutine.
 		mov bx, [r12]
 		sub r12, 2
 		jmp ep_loop
 	ep_op0e0:
-		#; 00:E0 -> clear display
+		#; 00:E0 - CLS. Clear the display.
 		lea rdi, screenbuffer[rip]
 		xor rax, rax
 		mov rcx, 32
@@ -193,17 +193,17 @@ ep_op0:
 		call drawbuffer
 		jmp ep_loop
 ep_op1:
-	#; 1N:NN -> jump to NNN
+	#; 1n:nn - JP addr. Jump to location nnn.
 	mov bx, ax
 	jmp ep_loop
 ep_op2:
-	#; 2N:NN -> call subroutine at NNN
+	#; 2n:nn - CALL addr. Call subroutine at nnn.
 	add r12, 2
 	mov [r12], bx
 	mov bx, ax
 	jmp ep_loop
 ep_op3:
-	#; 3X:NN -> skip next instruction if Vx == NN
+	#; 3x:kk - SE Vx, byte. Skip next instruction if Vx = kk.
 	xor rcx, rcx
 	mov cl, ah
 	mov dl, [r13+rcx]
@@ -212,7 +212,7 @@ ep_op3:
 	add rbx, 2
 	jmp ep_loop
 ep_op4:
-	#; 4X:NN -> skip next instruction if Vx != NN
+	#; 4x:kk - SNE Vx, byte. Skip next instruction if Vx != kk.
 	xor rcx, rcx
 	mov cl, ah
 	mov dl, [r13+rcx]
@@ -221,7 +221,7 @@ ep_op4:
 	add rbx, 2
 	jmp ep_loop
 ep_op5:
-	#; 5X:Y0 -> skip next instruction if Vx == Vy
+	#; 5x:y0 - SE Vx, Vy. Skip next instruction if Vx = Vy.
 	xor rcx, rcx
 	mov cl, ah
 	mov dl, [r13+rcx]
@@ -232,28 +232,19 @@ ep_op5:
 	add rbx, 2
 	jmp ep_loop
 ep_op6:
-	#; 6X:NN -> set Vx to NN
+	#; 6x:kk - LD Vx, byte. Set Vx = kk.
 	xor rcx, rcx
 	mov cl, ah
 	mov [r13+rcx], al
 	jmp ep_loop
 ep_op7:
-	#; 7X:NN -> Vx += NN, do NOT modify carry flag
+	#; 7x:kk - ADD Vx, byte. Set Vx = Vx + kk.
 	xor rcx, rcx
 	mov cl, ah
 	add [r13+rcx], al
 	jmp ep_loop
 ep_op8:
-	#; 8X:YZ -> save to Vx after operate with Vy
-	#; 		Z = 0 -> MOV
-	#; 		Z = 1 -> OR
-	#; 		Z = 2 -> AND
-	#; 		Z = 3 -> XOR
-	#; 		Z = 4 -> ADD (VF = carry)
-	#; 		Z = 5 -> SUB (VF = !borrow)
-	#;		Z = 6 -> (VF least significant bit); Vx = Vy = (Vy >> 1)
-	#;      Z = 7 -> Vy -= Vx, note swapped (VF = !borrow)
-	#;		Z = E -> (VF most significant bit); Vx = Vy = (Vy << 1)
+	#; 8x:y?. Operate with Vx and Vy, may modify VF.
 	xor r8, r8
 	xor r9, r9
 	xor rcx, rcx
@@ -293,44 +284,53 @@ ep_jt8:
 	.long ep_loop - ep_jt8
 	.text
 	ep_op80:
+		#; 8x:y0 - LD Vx, Vy. Set Vx = Vy.
 		mov [r13+rcx], r9b
 		jmp ep_loop
 	ep_op81:
+		#; 8x:y1 - OR Vx, Vy. Set Vx = Vx OR Vy.
 		or [r13+rcx], r9b
 		jmp ep_loop
 	ep_op82:
+		#; 8x:y2 - AND Vx, Vy. Set Vx = Vx AND Vy.
 		and [r13+rcx], r9b
 		jmp ep_loop
 	ep_op83:
+		#; 8x:y3 - XOR Vx, Vy. Set Vx = Vx XOR Vy.
 		xor [r13+rcx], r9b
 		jmp ep_loop
 	ep_op84:
+		#; 8x:y4 - ADD Vx, Vy. Set Vx = Vx + Vy, set VF = carry.
 		add [r13+rcx], r9b
-		setc byte ptr 0xf[r13]  #; set VF if carry
+		setc byte ptr 0xf[r13]
 		jmp ep_loop
 	ep_op85:
+		#; 8x:y5 - SUB Vx, Vy. Set Vx = Vx - Vy, set VF = NOT borrow.
 		sub [r13+rcx], r9b
-		setnc byte ptr 0xf[r13]  #; set VF if NOT borrow (carry)
+		setnc byte ptr 0xf[r13]
 		jmp ep_loop
 	ep_op86:
+		#; 8x:y6 - SHR Vx {, Vy}. Set Vx = Vx SHR 1, set VF = bit shifted out.
 		shr r9b
-		setc byte ptr 0xf[r13]  #; set VF to the bit shifted out
+		setc byte ptr 0xf[r13]
 		mov [r13+rcx], r9b
 		mov [r13+rdx], r9b
 		jmp ep_loop
 	ep_op87:
+		#; 8x:y7 - SUBN Vx, Vy. Set Vx = Vy - Vx, set VF = NOT borrow.
 		sub [r13+rdx], r8b
-		setnc byte ptr 0xf[r13]  #; set VF if NOT borrow (carry)
+		setnc byte ptr 0xf[r13]
 		jmp ep_loop
 	ep_op8e:
+		#; 8x:yE - SHL Vx {, Vy}. Set Vx = Vx SHL 1, set VF = bit shifted out.
 		shl r9b
-		setc byte ptr 0xf[r13]  #; set VF to the bit shifted out
+		setc byte ptr 0xf[r13]
 		mov [r13+rcx], r9b
 		mov [r13+rdx], r9b
 		jmp ep_loop
 
 ep_op9:
-	#; 9X:Y0 -> skip next instruction if Vx != Vy
+	#; 9x:y0 - SNE Vx, Vy. Skip next instruction if Vx != Vy.
 	xor rcx, rcx
 	mov cl, ah
 	mov dl, [r13+rcx]
@@ -341,18 +341,18 @@ ep_op9:
 	add rbx, 2
 	jmp ep_loop
 ep_opa:
-	#; AN:NN -> set reg I to NNN
+	#; An:nn - LD I, addr. Set I = nnn.
 	mov program_regi[rip], ax
 	jmp ep_loop
 ep_opb:
-	#; BN:NN -> jump to V0+NNN
+	#; Bn:nn - JP V0, addr. Jump to location nnn + V0.
 	xor rcx, rcx
 	mov cl, 0[r13]
 	add ax, cx
 	mov bx, ax
 	jmp ep_loop
 ep_opc:
-	#; CX:NN -> Vx = rand() & NN
+	#; Cx:kk - RND Vx, byte. Set Vx = random byte AND kk.
 	push rax
 	call rand@PLT
 	mov rdx, rax
@@ -363,9 +363,11 @@ ep_opc:
 	mov [r13+rcx], dl
 	jmp ep_loop
 ep_opd:
-	#; DX:YN -> draw(coord x = Vx, coord y = Vy, height = N), width = 8
+	#; Dx:yn - DRW Vx, Vy, nibble. Display n-byte sprite starting at memory
+	#;                            location I at (Vx, Vy), set VF = collision.
+	#;
 	#; TODO VF = 1 if any bit erased
-	#;      out of bounds should wraps to the other side of the screen wrong
+	#;      out of bounds wraps to the other side of the screen wrong
 	#;
 	#; r8b, r9b = Vx, Vy
 	xor rcx, rcx
@@ -406,7 +408,7 @@ ep_opdrawloop:
 	jmp ep_loop
 
 ep_ope:
-	#; EX:[9E|A1]
+	#; Ex:??. Skip on key.
 	xor rcx, rcx
 	mov cl, ah
 	mov cl, [r13+rcx]
@@ -415,32 +417,20 @@ ep_ope:
 	cmp al, 0xa1
 	jne ep_loop
 ep_opexa1:
-	#; skip next instruction if key() != Vx
+	#; Ex:9E - SKP Vx. Skip next instruction if key pressed = value of Vx.
 	cmp dl, cl
 	je ep_loop
 	add rbx, 2
 	jmp ep_loop
 ep_opex9e:
-	#; skip next instruction if key() == Vx
+	#; Ex:A1 - SKNP Vx. Skip next instruction if key pressed != value of Vx.
 	cmp dl, cl
 	jne ep_loop
 	add rbx, 2
 	jmp ep_loop
 
 ep_opf:
-	#; FX:IJ
-	#;   if I = 0:
-	#;     if J = 7: Vx = get_delay()
-	#;     if J = A: Vx = get_key() (blocking)
-	#;   if I = 1:
-	#;     if J = 5: delay_timer(Vx)
-	#;     if J = 8: sound_timer(Vx)
-	#;     if J = E: I += Vx
-	#;   if I = 2, J = 9: I = sprite_addr[Vx], characters in 4x5 font
-	#;     if J = 9
-	#;   if I = J = 3: set_BCD(Vx), at I -> I hundred, I+1 tens, I+2 digit
-	#;   IF I = J = 5: store from V0 to Vx inclusive into I, increasing I
-	#;   IF I = 6, J = 5: load to V0 to Vx inclusive from I, increasing I
+	#; Fx:??. Special registers (I, delay, sound, key) and misc.
 	xor rcx, rcx
 	mov cl, ah  #; [r13+rcx] = register
 	mov r8b, al
@@ -460,9 +450,10 @@ ep_opf:
 	cmp r8b, 6
 	jne ep_loop
 	ep_opf6:
+		#; Fx:65 - LD Vx, [I]. Read registers V0 through Vx from memory
+		#;                     starting at location I.
 		cmp r9b, 0x05
 		jne ep_loop
-		#; load registers into V0 to Vx
 		movzx rax, word ptr program_regi[rip]
 		lea rsi, program[rip]
 		add rsi, rax
@@ -477,9 +468,11 @@ ep_opf:
 		cmp r9b, 0x0a
 		jne ep_loop
 		ep_opf0a:
+			#; Fx:0A - LD Vx, K. Vx = wait for key press.
 			#;SDL_WaitEvent
 			jmp ep_loop
 		ep_opf07:
+			#; Fx:07 - LD Vx, DT. Set Vx = delay timer value.
 			mov al, program_delay_timer[rip]
 			mov [r13+rcx], al
 			jmp ep_loop
@@ -492,17 +485,21 @@ ep_opf:
 		cmp r9b, 0x0e
 		jne ep_loop
 		ep_opf1e:
+			#; Fx:1E - ADD I, Vx. Set I = I + Vx.
 			add program_regi[rip], ax
 			cmp word ptr program_regi[rip], 0xfff
 			seta byte ptr 0xf[r13]  #; set VF if bound overflow (above)
 			jmp ep_loop
 		ep_opf15:
+			#; Fx:15 - LD DT, Vx. Set delay timer = Vx.
 			mov program_delay_timer[rip], al
 			jmp ep_loop
 		ep_opf18:
+			#; Fx:18 - LD ST, Vx. Set sound timer = Vx.
 			mov program_sound_timer[rip], al
 			jmp ep_loop
 	ep_opf2:
+		#; Fx:29 - LD F, Vx. Set I = location of sprite for digit Vx.
 		cmp r9b, 0x09
 		jne ep_loop
 		movzx rax, byte ptr [r13+rcx]
@@ -510,6 +507,8 @@ ep_opf:
 		mov word ptr program_regi[rip], ax
 		jmp ep_loop
 	ep_opf3:
+		#; Fx:33 - LD B, Vx. Store BCD representation of Vx in memory
+		#;                  locations I, I+1, and I+2.
 		cmp r9b, 0x03
 		jne ep_loop
 		movzx ax, byte ptr [r13+rcx]
@@ -525,9 +524,10 @@ ep_opf:
 		mov program_regi[rip+2], dl
 		jmp ep_loop
 	ep_opf5:
+		#; Fx:55 - LD [I], Vx. Store registers V0 through Vx in memory
+		#;                    starting at location I.
 		cmp r9b, 0x05
 		jne ep_loop
-		#; dump registers from V0 to Vx
 		lea rsi, program_regs[rip]
 		movzx rax, word ptr program_regi[rip]
 		lea rdi, program[rip]
