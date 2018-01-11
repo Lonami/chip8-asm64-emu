@@ -125,15 +125,34 @@ ep_jumptable:
 	.text
 
 ep_op0:
-	jmp ep_loop
+	cmp al, 0xe0
+	je ep_op0e0
+	cmp al, 0xee
+	jne ep_loop
+	ep_op0ee:
+		#; 00:EE -> return
+		mov bx, [r12]
+		sub r12, 2
+		jmp ep_loop
+	ep_op0e0:
+		#; 00:E0 -> clear display
+		mov word ptr rect[rip+0], 0  #; x
+		mov word ptr rect[rip+2], 0  #; y
+		mov word ptr rect[rip+4], SCREEN_WIDTH  #; width
+		mov word ptr rect[rip+6], SCREEN_HEIGHT  #; height
+		mov rdi, screen[rip]
+		lea rsi, rect[rip]
+		mov edx, SCREEN_CLEAR
+		call SDL_FillRect@PLT
+		jmp ep_loop
 ep_op1:
 	#; 1N:NN -> jump to NNN
 	mov bx, ax
 	jmp ep_loop
 ep_op2:
 	#; 2N:NN -> call subroutine at NNN
-	mov [r12], bx
 	add r12, 2
+	mov [r12], bx
 	mov bx, ax
 	jmp ep_loop
 ep_op3:
@@ -300,6 +319,9 @@ ep_opd:
 	#; DX:YN -> draw(coord x = Vx, coord y = Vy, height = N), width = 8
 	#; r14b will hold how many rows we need to do
 	#; r15b will hold the item we're drawing
+	#; TODO this should XOR sprites into the screen
+	#;      VF = 1 if any bit erased
+	#;      out of bounds should wrap to the other side of the screen
 	xor rcx, rcx
 	mov cl, ah
 	xor r8, r8
