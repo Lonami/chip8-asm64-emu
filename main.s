@@ -497,7 +497,9 @@ ep_opf:
 	ep_opf2:
 		cmp r9b, 0x09
 		jne ep_loop
-		#; TODO I = sprite_addr[Vx]
+		movzx rax, byte ptr [r13+rcx]
+		lea rax, [rax+rax*4]
+		mov word ptr program_regi[rip], ax
 		jmp ep_loop
 	ep_opf3:
 		cmp r9b, 0x03
