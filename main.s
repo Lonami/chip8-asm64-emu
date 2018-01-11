@@ -66,6 +66,36 @@
 	.global main
 
 
+#; eax = read key (0 if nothing, -1 if quit event)
+getkeylock:
+	push rbp
+	mov rbp, rsp
+	lea rdi, event[rip]
+	call SDL_WaitEvent@PLT
+	jmp gk_process
+getkey:
+	#; Important: SDL_PollEvent expects rbp = rsp (?) or bad things happen
+	push rbp
+	mov rbp, rsp
+	lea rdi, event[rip]
+	call SDL_PollEvent@PLT
+gk_process:
+	test eax, eax
+	jz gk_done
+	mov dl, byte ptr event[rip]
+	#; First check if event is quit
+	mov eax, -1
+	cmp dl, SDL_QUIT
+	je gk_done
+	#; Then if it was keydown
+	mov eax, 0
+	cmp dl, SDL_KEYDOWN
+	jne gk_done
+	mov eax, event[rip+8]
+gk_done:
+	leave
+	ret
+
 
 #; draws the screen buffer
 drawbuffer:
@@ -125,19 +155,11 @@ emulateprogram:
 	lea r12, program_stack[rip]
 	lea r13, program_regs[rip]
 ep_loop:
-	lea rdi, event[rip]
-	call SDL_PollEvent@PLT
-	xor r8, r8  #; r8 holds the key pressed if any
-	test eax, eax
-	jz ep_parseop
-
-	mov al, byte ptr event[rip]
-	cmp al, SDL_QUIT
+	call getkey@PLT
+	cmp eax, -1
 	je ep_quit
-
-	cmp al, SDL_KEYDOWN
-	jne ep_parseop
-	mov r8d, DWORD PTR event[rip+8]
+	xor r8, r8  #; r8 holds the key pressed if any
+	mov r8d, eax
 ep_parseop:
 	lea rsi, program[rip]
 	movzx rax, word ptr [rsi+rbx]
@@ -469,7 +491,12 @@ ep_opf:
 		jne ep_loop
 		ep_opf0a:
 			#; Fx:0A - LD Vx, K. Vx = wait for key press.
-			#;SDL_WaitEvent
+			call getkeylock
+			cmp eax, -1
+			je ep_quit
+			test eax, eax
+			jz ep_opf0a
+			#; TODO use the key from eax, which was pressed
 			jmp ep_loop
 		ep_opf07:
 			#; Fx:07 - LD Vx, DT. Set Vx = delay timer value.
