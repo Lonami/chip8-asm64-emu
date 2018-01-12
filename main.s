@@ -85,7 +85,13 @@ getkey:
 gk_process:
 	test eax, eax
 	jz gk_exit
+	#; First check if event is quit
 	mov ah, byte ptr event[rip]
+	cmp ah, SDL_QUIT
+	je gk_exit
+	#; Then if it was keydown
+	cmp ah, SDL_KEYDOWN
+	jne gk_exit
 	mov edx, event[rip+8]
 	mov al, dl
 	#; Map the key in al to the right one, if applicable. Otherwise, no event.
