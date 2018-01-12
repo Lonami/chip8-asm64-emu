@@ -89,6 +89,9 @@ savekey:
 sk_process:
 	mov edx, event[rip+8]
 	mov al, dl
+	#; Numpad conveniently goes from 0 to 9, check that first
+	cmp al, 10
+	jl sk_done
 	#; Map the key in al to the right one, if applicable. Otherwise, no event.
 	cmp al, 'Z'
 	jle sk_isupper
