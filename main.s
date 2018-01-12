@@ -61,6 +61,8 @@
 
 	err: .space 8
 
+	.set FRAME_DELAY, 1000/60
+
 .section .rodata
 	title: .string "CHIP-8"
 	readmode: .string "rb"
@@ -282,6 +284,8 @@ emulateprogram:
 	lea r12, program_stack[rip]
 	lea r13, program_regs[rip]
 ep_loop:
+	mov edi, FRAME_DELAY
+	call SDL_Delay@PLT
 	call getkey@PLT
 	cmp ah, SDL_QUIT
 	je ep_quit
