@@ -36,7 +36,10 @@
 	.set SDL_KEYUP, 3
 	.set SDL_QUIT, 12
 
+	.set SDL_INIT_AUDIO, 16
 	.set SDL_INIT_VIDEO, 32
+
+	.set AUDIO_U8, 8
 
 	.comm screen, 8, 8   #; SDL_Surface* screen
 	.comm event, 24, 16  #; SDL_Event event
@@ -88,6 +91,10 @@
 	#; Holds the error, if any, to print when exiting.
 	err: .space 8
 
+	#; Sound structs
+	desiredSpec: .zero 32
+	obtainedSpec: .zero 32
+
 .section .rodata
 	#; Some Read Only data such as error messages, title, etc.
 	title: .string "CHIP-8"
@@ -99,6 +106,27 @@
 
 .text
 	.global main
+
+
+#; SDL has a thread that will run our custom callback whenever the sound
+#; buffer needs more data. For something as simple as a beep, we can use
+#; a saw wave which only increments while the sound register is non-zero
+#; just like if it were a boolean flag.
+#;
+#; void callback(void *user_data, Uint8 *stream, int length);
+audiocallback:
+	test byte ptr program_sound_timer[rip], 0xff
+	jz ac_done
+	#; al holds the saw wave, which goes up to 255 and then overflows to 0.
+	xor al, 0
+	mov rdi, rsi
+	mov rcx, rdx
+ac_fillbuffer:
+	stosb
+	inc al
+	loop ac_fillbuffer
+ac_done:
+	ret
 
 
 #; ah -> Event
@@ -778,8 +806,9 @@ main:
 	mov edi, eax
 	call srand@PLT
 
-	#; We'll be using alone video for now
+	#; We'll be using video and audio, so enable both
 	mov edi, SDL_INIT_VIDEO
+	or edi, SDL_INIT_AUDIO
 	call SDL_Init@PLT
 	lea rdx, err_initfail[rip]
 	mov err[rip], rdx
@@ -803,6 +832,23 @@ main:
 	test rax, rax
 	jz quit
 	mov screen[rip], rax
+
+	#; Prepare the audio device (this is legacy, but really simple as well).
+	lea rsi, obtainedSpec[rip]
+	lea rdi, desiredSpec[rip]
+	mov dword ptr desiredSpec[rip], 44100      #; spec.freq = 44100
+	mov word ptr desiredSpec[rip+4], AUDIO_U8  #; spec.format = AUDIO_U8
+	mov byte ptr desiredSpec[rip+6], 1         #; spec.channels = 1
+	mov word ptr desiredSpec[rip+8], 2048      #; spec.samples = 2048
+	lea rax, audiocallback[rip]
+	mov QWORD PTR desiredSpec[rip+16], rax     #; spec.callback = callback
+	call SDL_OpenAudio@PLT
+	cmp rax, 0
+	jl quit
+
+	#; Start the audio (set pause = 0)
+	xor edi, edi
+	call SDL_PauseAudio@PLT
 
 	#; Everything ready, enter the routine that will emulate the read program
 	call emulateprogram
