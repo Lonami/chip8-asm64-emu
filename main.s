@@ -1,25 +1,49 @@
 .intel_syntax noprefix
 
+
+#; We're using g++ to compile which expects comments to be #
+#; but intel syntax highlight uses ; for comments, hence #;.
+#;
+#; See https://ftp.gnu.org/old-gnu/Manuals/gas-2.9.1/html_chapter/as_7.html
+#; for all possible assembler directives.
 .data
+	#; Some constants for our program
 	.set PX_MULT, 16
 	.set BITS_PER_PX, 0
 	.set VIDEO_FLAGS, 0
 
+	.set SCREEN_FILL, 0xffffff
+	.set SCREEN_CLEAR, 0x000000
+
+	#; CHIP-8 had a 4KB memory
+	.set PROGRAM_SIZE, 4*1024
+
+	#; The interpreter had the firt 512 bytes reserved,
+	#; and most programs were loaded immediatly after.
+	.set PROGRAM_START, 0x200
+
+	#; 48 bytes allow 24 levels of function nesting (only use of the stack).
+	.set STACK_SIZE, 48
+
+	#; 16 registers, named from V0...VF are available.
+	.set REG_COUNT, 16
+
+	#; The processor runs at 60Hz (60 times in a second).
+	.set FRAME_DELAY, 1000/60
+
+	#; Some constants defined in SDL headers
 	.set SDL_KEYDOWN, 2
 	.set SDL_KEYUP, 3
 	.set SDL_QUIT, 12
+
 	.set SDL_INIT_VIDEO, 32
 
-	#; comm name, size, alignment
 	.comm screen, 8, 8   #; SDL_Surface* screen
 	.comm event, 24, 16  #; SDL_Event event
 	.comm rect, 8, 8     #; SDL_Rect
 
-	.set SCREEN_FILL, 0xffffff
-	.set SCREEN_CLEAR, 0x000000
-
-	.set PROGRAM_SIZE, 0x1000
-	.set PROGRAM_START, 0x200
+	#; The lowest part of the memory belongs to our interpreter.
+	#; We can place the representation of numbers between 0..F here.
 	program:
 		.byte 0xF0, 0x90, 0x90, 0x90, 0xF0  #; 0
 		.byte 0x20, 0x60, 0x20, 0x20, 0x70  #; 1
@@ -39,46 +63,49 @@
 		.byte 0xF0, 0x80, 0xF0, 0x80, 0x80  #; F
 		.zero PROGRAM_SIZE - 0x50
 
-	screenbuffer: .zero 0x100  #; (64*32)/8 -> 256
-	.zero 8  #; extra padding, wrap around not emulated perfectly yet...
+	#; We also keep track of an intermeiate buffer where bits
+	#; represent whether to draw something or not. For this
+	#; reason we only need (64*32)/8 -> 256 bytes.
+	screenbuffer: .zero 0x100
+	#; And some extra padding for an imaginary row, just in case.
+	.zero 8
 
-	#; file pointer
-	.comm fp, 8, 8
-
-	.set STACK_SIZE, 48
+	#; Define the stack and the registers of our machine. These could
+	#; potentially live in the reserved memory for the interpreter, as
+	#; we don't really use that memory for anything else.
 	.comm program_stack, STACK_SIZE
-
-	.set REG_COUNT, 16
 	program_regs: .zero REG_COUNT
 	program_regi: .zero 2
 	program_delay_timer: .zero 1
 	program_sound_timer: .zero 1
 
-	#; 16 keys, as bits
+	#; Keep 2 bytes (16 bits) to indicate which keys are pressed.
 	keys: .zero 2
-	#; last key pressed, as integer
-	lastkey: .byte
 
+	#; File Pointer, when loading the ROM.
+	.comm fp, 8, 8
+
+	#; Holds the error, if any, to print when exiting.
 	err: .space 8
 
-	.set FRAME_DELAY, 1000/60
-
 .section .rodata
+	#; Some Read Only data such as error messages, title, etc.
 	title: .string "CHIP-8"
 	readmode: .string "rb"
 
-	err_wrongargs: .string "wrong argument count (must pass file to load)\n"
-	err_openfail: .string "failed to open file (does it exist?)\n"
+	err_wrongargs: .string "Wrong argument count (must pass file to load)\n"
+	err_openfail: .string "Failed to open file (does it exist?)\n"
+	err_initfail: .string "Failed to initialize devices\n"
 
 .text
 	.global main
 
 
-#; ah -> event
-#; al -> key pressed
+#; ah -> Event
+#; al -> Key Pressed
 #; ah <- 0 on invalid key
-#; al <- mapped key pressed, if any
-#; meant to be called after getkey/getkeylock
+#; al <- Mapped key pressed, if any
+#; This method is meant to be called after getkey/getkeylock.
 savekey:
 	cmp ah, SDL_KEYDOWN
 	je sk_process
@@ -133,8 +160,8 @@ sk_isupper:
 	je sk_keyb
 	cmp al, 'V'
 	je sk_keyf
-	#; no valid key pressed, consider no event
-	mov ah, 0
+	#; No valid key pressed, consider no event at all.
+	mov ax, 0
 	jmp sk_exit
 sk_key0:
 	mov al, 0x0
@@ -185,7 +212,6 @@ sk_keyf:
 	mov al, 0xf
 	jmp sk_done
 sk_done:
-	mov lastkey[rip], al
 	#; Update the keys bitset
 	mov cl, al
 	mov dx, 1
@@ -201,8 +227,8 @@ sk_exit:
 	ret
 
 
-#; ah = event (SDL_QUIT/SDL_KEYDOWN)
-#; al = mapped key pressed, if any
+#; ah <- Event (SDL_QUIT/SDL_KEYDOWN)
+#; al <- Mapped key pressed, if any
 getkeylock:
 	push rbp
 	mov rbp, rsp
@@ -229,15 +255,15 @@ gk_exit:
 	ret
 
 
-#; draws the screen buffer
+#; Draws the screen buffer
 drawbuffer:
-	push rbx  #; counter 0 -> 32
-	push r12  #; counter 64 -> 0
-	push r15  #; what we'll be drawing
-	mov word ptr rect[rip+4], PX_MULT  #; width
-	mov word ptr rect[rip+6], PX_MULT  #; height
-	#; each of the 32 rows fits in a 64 bit register
-	#; that is we iterate 32 times reading 64 bits (width)
+	push rbx  #; Counter 0 -> 32
+	push r12  #; Counter 64 -> 0
+	push r15  #; What we'll be drawing
+	mov word ptr rect[rip+4], PX_MULT  #; Width
+	mov word ptr rect[rip+6], PX_MULT  #; Height
+	#; Each of the 32 rows fits in a 64 bit register.
+	#; That is, we iterate 32 times reading 64 bits (width).
 	xor rbx, rbx
 	#; y = 0
 	mov word ptr rect[rip+2], 0
@@ -264,7 +290,7 @@ drawbuffer:
 		inc rbx
 		cmp rbx, 32
 		jne db_loop
-	#; update everything
+	#; Update the whole screen.
 	mov rdi, screen[rip]
 	mov esi, 0
 	mov edx, 0
@@ -278,18 +304,19 @@ drawbuffer:
 
 
 emulateprogram:
-	push rbx  #; program counter
-	push r12  #; stack pointer
-	push r13  #; register base
-	push r14  #; preserved but temporary
-	push r15  #; preserved but temporary
+	push rbx  #; Program counter
+	push r12  #; Stack pointer
+	push r13  #; Register base
 	mov rbx, PROGRAM_START
 	lea r12, program_stack[rip]
 	lea r13, program_regs[rip]
 ep_loop:
+	#; Sleep a bit to emulate CHIP-8's processor speed
 	mov edi, FRAME_DELAY
 	call SDL_Delay@PLT
+
 ep_checkdelay:
+	#; Decrement the delay and sound timer, if they're non-zero
 	test byte ptr program_delay_timer[rip], 0xff
 	jz ep_checksound
 	dec byte ptr program_delay_timer[rip]
@@ -297,27 +324,26 @@ ep_checksound:
 	test byte ptr program_sound_timer[rip], 0xff
 	jz ep_pollevent
 	dec byte ptr program_sound_timer[rip]
+
 ep_pollevent:
+	#; Poll a key event if any, and exit if requested
 	call getkey@PLT
 	cmp ah, SDL_QUIT
 	je ep_quit
-	xor r8, r8  #; r8 holds the key pressed if any
-	mov r8b, al
 ep_parseop:
 	lea rsi, program[rip]
 	movzx rax, word ptr [rsi+rbx]
-	xchg ah, al  #; endianness
+	xchg ah, al  #; CHIP-8 endianess is big, while most processors are little
 	add rbx, 2
-	#; keep op to jump in rcx, mask it away from rax
+	#; Keep operation to jump in rcx, and mask it away from rax for easier use
 	xor rcx, rcx
 	mov cl, ah
 	shr cl, 4
 	and ah, 0x0f
-	lea rdx, ep_jumptable[rip]  #; base of jump table doesn't change
-	movsx rcx, dword ptr [rdx+rcx*4]  #; offset value
-	add rcx, rdx  #; add base to the offset value
-	mov rdx, r8  #; key pressed in rdx
-	jmp rcx  #; jump to it
+	lea rdx, ep_jumptable[rip]  #; Base of jump table doesn't change
+	movsx rcx, dword ptr [rdx+rcx*4]  #; Offset value
+	add rcx, rdx  #; Add base to the offset value
+	jmp rcx  #; Jump to it
 	.section	.rodata
 	.align 4
 ep_jumptable:
@@ -420,14 +446,14 @@ ep_op8:
 	shr dl, 4
 	cmp r9b, [r13+rdx]
 
-	#; keep op to jump in r10, mask it away from rax
+	#; Keep operation to jump in r10
 	xor r10, r10
 	mov r10w, ax  #; r10b <- ah
 	shr r10w, 8+4
-	lea rax, ep_jt8[rip]  #; base of jump table doesn't change
-	movsx r10, dword ptr [rax+r10*4]  #; offset value
-	add r10, rax  #; add base to the offset value
-	jmp r10  #; jump to it
+	lea rax, ep_jt8[rip]  #; Base of jump table doesn't change
+	movsx r10, dword ptr [rax+r10*4]  #; Offset value
+	add r10, rax  #; Add base to the offset value
+	jmp r10  #; Jump to it
 	.section	.rodata
 	.align 4
 ep_jt8:
@@ -529,7 +555,7 @@ ep_opc:
 	jmp ep_loop
 ep_opd:
 	#; Dx:yn - DRW Vx, Vy, nibble. Display n-byte sprite starting at memory
-	#;                            location I at (Vx, Vy), set VF = collision.
+	#;                             location I at (Vx, Vy), set VF = collision.
 	#;
 	#; TODO VF = 1 if any bit erased
 	#;      out of bounds wraps to the other side of the screen wrong
@@ -556,19 +582,19 @@ ep_opd:
 	#; cl = x
 	mov cl, r8b
 ep_opdrawloop:
-	#; since screenbuffer works with bits, we'll load data into al
-	#; then rotate 8 so it starts at offset 0, then rotate until x
+	#; Since screenbuffer works with bits, we'll load data into al
+	#; then rotate 8 so it starts at offset 0, then rotate until x.
 	xor rax, rax
 	lodsb
-	#; rotate so the data is at "position" 0 in the register
+	#; Rotate so the data is at "position" 0 in the register
 	ror rax, 8
-	#; then rotate by the extra "x" to actually position it
+	#; Then rotate by the extra "x" to actually position it
 	ror rax, cl
 	xor [rdi], rax
 	add rdi, 8
 	dec ch
 	jnz ep_opdrawloop
-	#; draw the new buffer
+	#; Draw the new buffer
 	call drawbuffer
 	jmp ep_loop
 
@@ -712,8 +738,6 @@ ep_opf:
 		rep movsb
 		jmp ep_loop
 ep_quit:
-	pop r15
-	pop r14
 	pop r13
 	pop r12
 	pop rbx
@@ -721,16 +745,17 @@ ep_quit:
 
 
 main:
+	#; SDL expects us to have an activation frame, where rbp -> rsp.
 	push rbp
 	mov rbp, rsp
 
-	#; check we have enough arguments
+	#; First we check that we have enough arguments (ROM to load)
 	lea rdx, err_wrongargs[rip]
 	mov err[rip], rdx
 	cmp rdi, 2
 	jne error
 
-	#; we do so pick the pointer to the 2nd string
+	#; If we do, pick the pointer to the 2nd string argument and load the ROM
 	mov rdi, 8[rsi]
 	lea rsi, readmode[rip]
 	call fopen@PLT
@@ -746,33 +771,50 @@ main:
 	mov rcx, rax
 	call fread@PLT
 
-	#; init rng
+	#; Initialize the RNG so we can call rand()
 	mov edi, 0
 	xor eax, eax
 	call time@PLT
 	mov edi, eax
 	call srand@PLT
 
+	#; We'll be using alone video for now
 	mov edi, SDL_INIT_VIDEO
 	call SDL_Init@PLT
+	lea rdx, err_initfail[rip]
+	mov err[rip], rdx
+	test rax, rax
+	jnz error
 
+	#; Set the window title to something relevant
 	lea rsi, title[rip]
 	lea rdi, title[rip]
 	call SDL_WM_SetCaption@PLT
 
+	#; Prepare the video mode, so we actually have the dimensions on screen.
+	#; We have a constant PX_MULT and instead drawing single pixels and then
+	#; letting SDL resize them to a larger window size (which we should figure
+	#; out how to do at some point), we draw rectangles of dimensions PX_MULT.
 	mov edi, 64*PX_MULT
 	mov esi, 32*PX_MULT
 	mov edx, BITS_PER_PX
 	mov ecx, VIDEO_FLAGS
 	call SDL_SetVideoMode@PLT
+	test rax, rax
+	jz quit
 	mov screen[rip], rax
 
+	#; Everything ready, enter the routine that will emulate the read program
 	call emulateprogram
+quit:
 	call SDL_Quit@PLT
 	jmp exit
 
 error:
+	#; On error, err will point to the string containing the error message
 	mov rdi, err[rip]
+	#; printf accepts floating point variable arguments, but we are
+	#; not using any. We tell it so by xor'ing away the rax register.
 	xor rax, rax
 	call printf@PLT
 	mov eax, 1
@@ -781,5 +823,6 @@ error:
 exit:
 	mov eax, 0
 .exit:
+	#; Leave the activation frame, and return the main function exiting
 	leave
 	ret
