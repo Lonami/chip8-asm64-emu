@@ -70,8 +70,6 @@
 	#; represent whether to draw something or not. For this
 	#; reason we only need (64*32)/8 -> 256 bytes.
 	screenbuffer: .zero 0x100
-	#; And some extra padding for an imaginary row, just in case.
-	.zero 8
 
 	#; Define the stack and the registers of our machine. These could
 	#; potentially live in the reserved memory for the interpreter, as
@@ -564,10 +562,9 @@ ep_opd:
 	#; Dx:yn - DRW Vx, Vy, nibble. Display n-byte sprite starting at memory
 	#;                             location I at (Vx, Vy), set VF = collision.
 	#;
-	#; TODO VF = 1 if any bit erased
-	#;      out of bounds wraps to the other side of the screen wrong
-	#;
 	#; r8b, r9b = Vx, Vy
+	#; r10b holds VF, r11b whether there was collision
+	xor r10b, r10b
 	xor rcx, rcx
 	mov cl, ah
 	mov r8b, [r13+rcx]
@@ -597,10 +594,15 @@ ep_opdrawloop:
 	ror rax, 8
 	#; Then rotate by the extra "x" to actually position it
 	ror rax, cl
+	#; If any bit matches (1 and 1 -> not zero), it will flip off, set VF.
+	test [rdi], rax
+	setnz r11b
+	or r10b, r11b
 	xor [rdi], rax
 	add rdi, 8
 	dec ch
 	jnz ep_opdrawloop
+	mov 0xf[r13], r10b
 	#; Draw the new buffer
 	call drawbuffer
 	jmp ep_loop
@@ -718,12 +720,13 @@ ep_opf:
 		cmp r9b, 0x09
 		jne ep_loop
 		movzx rax, byte ptr [r13+rcx]
+		and al, 0xf
 		lea rax, [rax+rax*4]
 		mov word ptr program_regi[rip], ax
 		jmp ep_loop
 	ep_opf3:
 		#; Fx:33 - LD B, Vx. Store BCD representation of Vx in memory
-		#;                  locations I, I+1, and I+2.
+		#;                   locations I, I+1, and I+2.
 		cmp r9b, 0x03
 		jne ep_loop
 		movzx ax, byte ptr [r13+rcx]
@@ -740,7 +743,7 @@ ep_opf:
 		jmp ep_loop
 	ep_opf5:
 		#; Fx:55 - LD [I], Vx. Store registers V0 through Vx in memory
-		#;                    starting at location I.
+		#;                     starting at location I.
 		cmp r9b, 0x05
 		jne ep_loop
 		lea rsi, program_regs[rip]
