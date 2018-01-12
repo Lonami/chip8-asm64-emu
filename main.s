@@ -6,6 +6,7 @@
 	.set VIDEO_FLAGS, 0
 
 	.set SDL_KEYDOWN, 2
+	.set SDL_KEYUP, 3
 	.set SDL_QUIT, 12
 	.set SDL_INIT_VIDEO, 32
 
@@ -53,6 +54,9 @@
 	program_delay_timer: .zero 1
 	program_sound_timer: .zero 1
 
+	#; 16 keys, as bits
+	keys: .zero 2
+	#; last key pressed, as integer
 	lastkey: .byte
 
 	err: .space 8
@@ -66,6 +70,130 @@
 
 .text
 	.global main
+
+
+#; ah -> event
+#; al -> key pressed
+#; ah <- 0 on invalid key
+#; al <- mapped key pressed, if any
+#; meant to be called after getkey/getkeylock
+savekey:
+	cmp ah, SDL_KEYDOWN
+	je sk_process
+	cmp ah, SDL_KEYUP
+	je sk_process
+	mov ax, 0
+	jmp sk_exit
+sk_process:
+	mov edx, event[rip+8]
+	mov al, dl
+	#; Map the key in al to the right one, if applicable. Otherwise, no event.
+	cmp al, 'Z'
+	jle sk_isupper
+	sub al, 'a' - 'A'
+sk_isupper:
+	#; 1 2 3 4  ->  1 2 3 C
+	cmp al, '1'
+	je sk_key1
+	cmp al, '2'
+	je sk_key2
+	cmp al, '3'
+	je sk_key3
+	cmp al, '4'
+	je sk_keyc
+	#; Q W E R  ->  4 5 6 D
+	cmp al, 'Q'
+	je sk_key4
+	cmp al, 'W'
+	je sk_key5
+	cmp al, 'E'
+	je sk_key6
+	cmp al, 'R'
+	je sk_keyd
+	#; A S D F  ->  7 8 9 E
+	cmp al, 'A'
+	je sk_key7
+	cmp al, 'S'
+	je sk_key8
+	cmp al, 'D'
+	je sk_key9
+	cmp al, 'F'
+	je sk_keye
+	#; Z X C V  ->  A 0 B F
+	cmp al, 'Z'
+	je sk_keya
+	cmp al, 'X'
+	je sk_key0
+	cmp al, 'C'
+	je sk_keyb
+	cmp al, 'V'
+	je sk_keyf
+	#; no valid key pressed, consider no event
+	mov ah, 0
+	jmp sk_exit
+sk_key0:
+	mov al, 0x0
+	jmp sk_done
+sk_key1:
+	mov al, 0x1
+	jmp sk_done
+sk_key2:
+	mov al, 0x2
+	jmp sk_done
+sk_key3:
+	mov al, 0x3
+	jmp sk_done
+sk_key4:
+	mov al, 0x4
+	jmp sk_done
+sk_key5:
+	mov al, 0x5
+	jmp sk_done
+sk_key6:
+	mov al, 0x6
+	jmp sk_done
+sk_key7:
+	mov al, 0x7
+	jmp sk_done
+sk_key8:
+	mov al, 0x8
+	jmp sk_done
+sk_key9:
+	mov al, 0x9
+	jmp sk_done
+sk_keya:
+	mov al, 0xa
+	jmp sk_done
+sk_keyb:
+	mov al, 0xb
+	jmp sk_done
+sk_keyc:
+	mov al, 0xc
+	jmp sk_done
+sk_keyd:
+	mov al, 0xd
+	jmp sk_done
+sk_keye:
+	mov al, 0xe
+	jmp sk_done
+sk_keyf:
+	mov al, 0xf
+	jmp sk_done
+sk_done:
+	mov lastkey[rip], al
+	#; Update the keys bitset
+	mov cl, al
+	mov dx, 1
+	shl dx, cl
+	cmp ah, SDL_KEYUP
+	je sk_up
+	or keys[rip], dx
+	jmp sk_exit
+sk_up:
+	not dx
+	and keys[rip], dx
+sk_exit:
+	ret
 
 
 #; ah = event (SDL_QUIT/SDL_KEYDOWN)
@@ -90,104 +218,7 @@ gk_process:
 	cmp ah, SDL_QUIT
 	je gk_exit
 	#; Then if it was keydown
-	cmp ah, SDL_KEYDOWN
-	jne gk_exit
-	mov edx, event[rip+8]
-	mov al, dl
-	#; Map the key in al to the right one, if applicable. Otherwise, no event.
-	cmp al, 'Z'
-	jle gk_isupper
-	sub al, 'a' - 'A'
-gk_isupper:
-	#; 1 2 3 4  ->  1 2 3 C
-	cmp al, '1'
-	je gk_key1
-	cmp al, '2'
-	je gk_key2
-	cmp al, '3'
-	je gk_key3
-	cmp al, '4'
-	je gk_keyc
-	#; Q W E R  ->  4 5 6 D
-	cmp al, 'Q'
-	je gk_key4
-	cmp al, 'W'
-	je gk_key5
-	cmp al, 'E'
-	je gk_key6
-	cmp al, 'R'
-	je gk_keyd
-	#; A S D F  ->  7 8 9 E
-	cmp al, 'A'
-	je gk_key7
-	cmp al, 'S'
-	je gk_key8
-	cmp al, 'D'
-	je gk_key9
-	cmp al, 'F'
-	je gk_keye
-	#; Z X C V  ->  A 0 B F
-	cmp al, 'Z'
-	je gk_keya
-	cmp al, 'X'
-	je gk_key0
-	cmp al, 'C'
-	je gk_keyb
-	cmp al, 'V'
-	je gk_keyf
-	#; no valid key pressed, consider no event
-	mov ah, 0
-	jmp gk_done
-gk_key0:
-	mov al, 0x0
-	jmp gk_done
-gk_key1:
-	mov al, 0x1
-	jmp gk_done
-gk_key2:
-	mov al, 0x2
-	jmp gk_done
-gk_key3:
-	mov al, 0x3
-	jmp gk_done
-gk_key4:
-	mov al, 0x4
-	jmp gk_done
-gk_key5:
-	mov al, 0x5
-	jmp gk_done
-gk_key6:
-	mov al, 0x6
-	jmp gk_done
-gk_key7:
-	mov al, 0x7
-	jmp gk_done
-gk_key8:
-	mov al, 0x8
-	jmp gk_done
-gk_key9:
-	mov al, 0x9
-	jmp gk_done
-gk_keya:
-	mov al, 0xa
-	jmp gk_done
-gk_keyb:
-	mov al, 0xb
-	jmp gk_done
-gk_keyc:
-	mov al, 0xc
-	jmp gk_done
-gk_keyd:
-	mov al, 0xd
-	jmp gk_done
-gk_keye:
-	mov al, 0xe
-	jmp gk_done
-gk_keyf:
-	mov al, 0xf
-	jmp gk_done
-gk_done:
-	mov lastkey[rip], al
+	call savekey
 gk_exit:
 	leave
 	ret
@@ -530,20 +561,23 @@ ep_ope:
 	xor rcx, rcx
 	mov cl, ah
 	mov cl, [r13+rcx]
+	mov dx, 1
+	shl dx, cl
+ep_opecheck:
 	cmp al, 0x9e
 	je ep_opex9e
 	cmp al, 0xa1
 	jne ep_loop
 ep_opexa1:
-	#; Ex:9E - SKP Vx. Skip next instruction if key pressed = value of Vx.
-	cmp r8b, cl
-	je ep_loop
+	#; Ex:9E - SKP Vx. Skip next instruction if key[Vx] is pressed.
+	test keys[rip], dx
+	jz ep_loop
 	add rbx, 2
 	jmp ep_loop
 ep_opex9e:
-	#; Ex:A1 - SKNP Vx. Skip next instruction if key pressed != value of Vx.
-	cmp r8b, cl
-	jne ep_loop
+	#; Ex:A1 - SKNP Vx. Skip next instruction if key[Vx] is not pressed.
+	test keys[rip], dx
+	jnz ep_loop
 	add rbx, 2
 	jmp ep_loop
 
