@@ -349,7 +349,7 @@ ep_parseop:
 	movsx rcx, dword ptr [rdx+rcx*4]  #; Offset value
 	add rcx, rdx  #; Add base to the offset value
 	jmp rcx  #; Jump to it
-	.section	.rodata
+	.section .rodata
 	.align 4
 ep_jumptable:
 	.long ep_op0 - ep_jumptable
@@ -402,8 +402,7 @@ ep_op3:
 	#; 3x:kk - SE Vx, byte. Skip next instruction if Vx = kk.
 	xor rcx, rcx
 	mov cl, ah
-	mov dl, [r13+rcx]
-	cmp dl, al
+	cmp [r13+rcx], al
 	jne ep_loop
 	add rbx, 2
 	jmp ep_loop
@@ -411,13 +410,14 @@ ep_op4:
 	#; 4x:kk - SNE Vx, byte. Skip next instruction if Vx != kk.
 	xor rcx, rcx
 	mov cl, ah
-	mov dl, [r13+rcx]
-	cmp dl, al
+	cmp [r13+rcx], al
 	je ep_loop
 	add rbx, 2
 	jmp ep_loop
 ep_op5:
 	#; 5x:y0 - SE Vx, Vy. Skip next instruction if Vx = Vy.
+	test al, 0x0f
+	jnz ep_loop
 	xor rcx, rcx
 	mov cl, ah
 	mov dl, [r13+rcx]
@@ -441,8 +441,8 @@ ep_op7:
 	jmp ep_loop
 ep_op8:
 	#; 8x:y?. Operate with Vx and Vy, may modify VF.
-	xor r8, r8
-	xor r9, r9
+	#; r8b, r9b = Vx, Vy
+	#; rcx -> x; rdx -> y
 	xor rcx, rcx
 	mov cl, ah
 	mov r8b, [r13+rcx]
@@ -452,14 +452,13 @@ ep_op8:
 	cmp r9b, [r13+rdx]
 
 	#; Keep operation to jump in r10
-	xor r10, r10
-	mov r10w, ax  #; r10b <- ah
-	shr r10w, 8+4
+	movzx r10, al
+	and r10b, 0xf
 	lea rax, ep_jt8[rip]  #; Base of jump table doesn't change
 	movsx r10, dword ptr [rax+r10*4]  #; Offset value
 	add r10, rax  #; Add base to the offset value
 	jmp r10  #; Jump to it
-	.section	.rodata
+	.section .rodata
 	.align 4
 ep_jt8:
 	.long ep_op80 - ep_jt8
@@ -507,22 +506,21 @@ ep_jt8:
 		jmp ep_loop
 	ep_op86:
 		#; 8x:y6 - SHR Vx {, Vy}. Set Vx = Vx SHR 1, set VF = bit shifted out.
-		shr r9b
+		shr r8b
 		setc byte ptr 0xf[r13]
-		mov [r13+rcx], r9b
-		mov [r13+rdx], r9b
+		mov [r13+rcx], r8b
 		jmp ep_loop
 	ep_op87:
 		#; 8x:y7 - SUBN Vx, Vy. Set Vx = Vy - Vx, set VF = NOT borrow.
-		sub [r13+rdx], r8b
+		sub r9b, r8b
 		setnc byte ptr 0xf[r13]
+		mov [r13+rcx], r9b
 		jmp ep_loop
 	ep_op8e:
 		#; 8x:yE - SHL Vx {, Vy}. Set Vx = Vx SHL 1, set VF = bit shifted out.
-		shl r9b
+		shl r8b
 		setc byte ptr 0xf[r13]
-		mov [r13+rcx], r9b
-		mov [r13+rdx], r9b
+		mov [r13+rcx], r8b
 		jmp ep_loop
 
 ep_op9:
@@ -571,11 +569,12 @@ ep_opd:
 	mov cl, al
 	shr cl, 4
 	mov r9b, [r13+rcx]
-	#; set up rsi -> program[reg_i]
+	#; Set up rsi -> program[reg_i].
+	#; In the loop, al = [rsi++] through lodsb.
 	lea rsi, program[rip]
 	movzx rdx, word ptr program_regi[rip]
 	add rsi, rdx
-	#; now position rdi -> screenbuffer[y * 8]
+	#; Now set up rdi -> screenbuffer[y * 8]
 	lea rdi, screenbuffer[rip]
 	movzx rdx, r9b
 	shl rdx, 3
@@ -620,43 +619,42 @@ ep_opecheck:
 	cmp al, 0xa1
 	jne ep_loop
 ep_opexa1:
-	#; Ex:9E - SKP Vx. Skip next instruction if key[Vx] is pressed.
-	test keys[rip], dx
-	jz ep_loop
-	add rbx, 2
-	jmp ep_loop
-ep_opex9e:
 	#; Ex:A1 - SKNP Vx. Skip next instruction if key[Vx] is not pressed.
 	test keys[rip], dx
 	jnz ep_loop
 	add rbx, 2
 	jmp ep_loop
+ep_opex9e:
+	#; Ex:9E - SKP Vx. Skip next instruction if key[Vx] is pressed.
+	test keys[rip], dx
+	jz ep_loop
+	add rbx, 2
+	jmp ep_loop
 
 ep_opf:
 	#; Fx:??. Special registers (I, delay, sound, key) and misc.
+	#; r8b and r9b will hold the high and low nibble of  low part.
 	xor rcx, rcx
 	mov cl, ah  #; [r13+rcx] = register
 	mov r8b, al
 	shr r8b, 4
 	mov r9b, al
 	and r9b, 0x0f
-	cmp r8b, 0
+	cmp r8b, 0x0
 	je ep_opf0
-	cmp r8b, 1
+	cmp r8b, 0x1
 	je ep_opf1
-	cmp r8b, 2
-	je ep_opf2
-	cmp r8b, 3
-	je ep_opf3
-	cmp r8b, 5
-	je ep_opf5
-	cmp r8b, 6
+	cmp al, 0x29
+	je ep_opf29
+	cmp al, 0x33
+	je ep_opf33
+	cmp al, 0x55
+	je ep_opf55
+	cmp al, 0x65
 	jne ep_loop
-	ep_opf6:
+	ep_opf65:
 		#; Fx:65 - LD Vx, [I]. Read registers V0 through Vx from memory
 		#;                     starting at location I.
-		cmp r9b, 0x05
-		jne ep_loop
 		movzx rax, word ptr program_regi[rip]
 		lea rsi, program[rip]
 		add rsi, rax
@@ -705,7 +703,7 @@ ep_opf:
 			#; Fx:1E - ADD I, Vx. Set I = I + Vx.
 			add program_regi[rip], ax
 			cmp word ptr program_regi[rip], 0xfff
-			seta byte ptr 0xf[r13]  #; set VF if bound overflow (above)
+			seta byte ptr 0xf[r13]  #; Set VF if bound overflow (above)
 			jmp ep_loop
 		ep_opf15:
 			#; Fx:15 - LD DT, Vx. Set delay timer = Vx.
@@ -715,20 +713,16 @@ ep_opf:
 			#; Fx:18 - LD ST, Vx. Set sound timer = Vx.
 			mov program_sound_timer[rip], al
 			jmp ep_loop
-	ep_opf2:
+	ep_opf29:
 		#; Fx:29 - LD F, Vx. Set I = location of sprite for digit Vx.
-		cmp r9b, 0x09
-		jne ep_loop
 		movzx rax, byte ptr [r13+rcx]
 		and al, 0xf
 		lea rax, [rax+rax*4]
 		mov word ptr program_regi[rip], ax
 		jmp ep_loop
-	ep_opf3:
+	ep_opf33:
 		#; Fx:33 - LD B, Vx. Store BCD representation of Vx in memory
 		#;                   locations I, I+1, and I+2.
-		cmp r9b, 0x03
-		jne ep_loop
 		movzx ax, byte ptr [r13+rcx]
 		xor dx, dx
 		mov cx, 100
@@ -741,11 +735,9 @@ ep_opf:
 		mov program_regi[rip+1], al
 		mov program_regi[rip+2], dl
 		jmp ep_loop
-	ep_opf5:
+	ep_opf55:
 		#; Fx:55 - LD [I], Vx. Store registers V0 through Vx in memory
 		#;                     starting at location I.
-		cmp r9b, 0x05
-		jne ep_loop
 		lea rsi, program_regs[rip]
 		movzx rax, word ptr program_regi[rip]
 		lea rdi, program[rip]
