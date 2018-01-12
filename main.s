@@ -95,6 +95,9 @@
 	desiredSpec: .zero 32
 	obtainedSpec: .zero 32
 
+	#; Temporary variable for local stuff
+	tmp: .space 8
+
 .section .rodata
 	#; Some Read Only data such as error messages, title, etc.
 	title: .string "CHIP-8"
@@ -129,12 +132,12 @@ ac_done:
 	ret
 
 
-#; ah -> Event
-#; al -> Key Pressed
-#; ah <- 0 on invalid key
+#; Assumes event is set.
+#; ah <- Action, or 0 on invalid key
 #; al <- Mapped key pressed, if any
 #; This method is meant to be called after getkey/getkeylock.
 savekey:
+	mov ah, byte ptr event[rip]
 	cmp ah, SDL_KEYDOWN
 	je sk_process
 	cmp ah, SDL_KEYUP
@@ -255,34 +258,6 @@ sk_exit:
 	ret
 
 
-#; ah <- Event (SDL_QUIT/SDL_KEYDOWN)
-#; al <- Mapped key pressed, if any
-getkeylock:
-	push rbp
-	mov rbp, rsp
-	lea rdi, event[rip]
-	call SDL_WaitEvent@PLT
-	jmp gk_process
-getkey:
-	#; Important: SDL_PollEvent expects rbp = rsp (?) or bad things happen
-	push rbp
-	mov rbp, rsp
-	lea rdi, event[rip]
-	call SDL_PollEvent@PLT
-gk_process:
-	test eax, eax
-	jz gk_exit
-	#; First check if event is quit
-	mov ah, byte ptr event[rip]
-	cmp ah, SDL_QUIT
-	je gk_exit
-	#; Then if it was keydown
-	call savekey
-gk_exit:
-	leave
-	ret
-
-
 #; Draws the screen buffer
 drawbuffer:
 	push rbx  #; Counter 0 -> 32
@@ -355,9 +330,13 @@ ep_checksound:
 
 ep_pollevent:
 	#; Poll a key event if any, and exit if requested
-	call getkey@PLT
-	cmp ah, SDL_QUIT
+	lea rdi, event[rip]
+	call SDL_PollEvent@PLT
+	test eax, eax
+	jz ep_parseop
+	cmp byte ptr event[rip], SDL_QUIT
 	je ep_quit
+	call savekey
 ep_parseop:
 	lea rsi, program[rip]
 	movzx rax, word ptr [rsi+rbx]
@@ -691,14 +670,20 @@ ep_opf:
 		jne ep_loop
 		ep_opf0a:
 			#; Fx:0A - LD Vx, K. Vx = wait for key press.
-			push rcx
+			#; Do NOT push rcx to the stack. WaitEvent breaks.
+			mov tmp[rip], rcx
 		ep_opf0a_getkey:
-			call getkeylock
-			cmp ah, SDL_QUIT
+			lea rdi, event[rip]
+			call SDL_WaitEvent@PLT
+			#; Returns 0 on error while waiting for events
+			test eax, eax
+			jz ep_quit
+			cmp byte ptr event[rip], SDL_QUIT
 			je ep_quit
-			cmp ah, SDL_KEYDOWN
-			jne ep_opf0a_getkey
-			pop rcx
+			call savekey
+			test ah, ah
+			jz ep_opf0a_getkey
+			mov rcx, tmp[rip]
 			mov [r13+rcx], al
 			jmp ep_loop
 		ep_opf07:
