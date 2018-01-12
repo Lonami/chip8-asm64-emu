@@ -286,6 +286,15 @@ emulateprogram:
 ep_loop:
 	mov edi, FRAME_DELAY
 	call SDL_Delay@PLT
+ep_checkdelay:
+	test byte ptr program_delay_timer[rip], 0xff
+	jz ep_checksound
+	dec byte ptr program_delay_timer[rip]
+ep_checksound:
+	test byte ptr program_sound_timer[rip], 0xff
+	jz ep_pollevent
+	dec byte ptr program_sound_timer[rip]
+ep_pollevent:
 	call getkey@PLT
 	cmp ah, SDL_QUIT
 	je ep_quit
