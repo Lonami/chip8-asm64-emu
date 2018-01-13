@@ -659,7 +659,6 @@ ep_opf:
 		lea rsi, program[rip]
 		add rsi, rax
 		lea rdi, program_regs[rip]
-		add word ptr program_regi[rip], cx
 		rep movsb
 		jmp ep_loop
 
@@ -723,17 +722,20 @@ ep_opf:
 	ep_opf33:
 		#; Fx:33 - LD B, Vx. Store BCD representation of Vx in memory
 		#;                   locations I, I+1, and I+2.
+		movzx rax, word ptr program_regi[rip]
+		lea rdi, program[rip]
+		add rdi, rax
 		movzx ax, byte ptr [r13+rcx]
 		xor dx, dx
 		mov cx, 100
 		div cx
-		mov program_regi[rip+0], al
+		mov [rdi+0], al
 		mov ax, dx
 		xor dx, dx
 		mov cx, 10
 		div cx
-		mov program_regi[rip+1], al
-		mov program_regi[rip+2], dl
+		mov [rdi+1], al
+		mov [rdi+2], dl
 		jmp ep_loop
 	ep_opf55:
 		#; Fx:55 - LD [I], Vx. Store registers V0 through Vx in memory
@@ -742,7 +744,6 @@ ep_opf:
 		movzx rax, word ptr program_regi[rip]
 		lea rdi, program[rip]
 		add rdi, rax
-		add word ptr program_regi[rip], cx
 		rep movsb
 		jmp ep_loop
 ep_quit:
