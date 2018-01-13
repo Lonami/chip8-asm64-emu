@@ -449,7 +449,7 @@ ep_op8:
 	xor rdx, rdx
 	mov dl, al
 	shr dl, 4
-	cmp r9b, [r13+rdx]
+	mov r9b, [r13+rdx]
 
 	#; Keep operation to jump in r10
 	movzx r10, al
