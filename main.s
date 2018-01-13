@@ -243,6 +243,8 @@ sk_keyf:
 sk_done:
 	#; Update the keys bitset
 	mov cl, al
+	#; Note that we must return from 1..16, but shift from 0..15 times.
+	inc al
 	mov dx, 1
 	shl dx, cl
 	cmp ah, SDL_KEYUP
@@ -611,6 +613,8 @@ ep_ope:
 	xor rcx, rcx
 	mov cl, ah
 	mov cl, [r13+rcx]
+	#; Note that we need to shift between 0..15 times, not 1..16
+	dec cl
 	mov dx, 1
 	shl dx, cl
 ep_opecheck:
