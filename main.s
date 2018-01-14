@@ -28,8 +28,11 @@
 	#; 16 registers, named from V0...VF are available.
 	.set REG_COUNT, 16
 
-	#; The processor runs at 60Hz (60 times in a second).
-	.set FRAME_DELAY, 1000/60
+	#; The processor interrupts at 50Hz (50 times in a second).
+	.set FRAME_DELAY, 1000/50
+
+	#; How many instructions to run per time slice (at FRAME_DELAY)
+	.set INSTRUCTION_PERIOD, 15
 
 	#; Some constants defined in SDL headers
 	.set SDL_KEYDOWN, 2
@@ -310,10 +313,17 @@ emulateprogram:
 	push rbx  #; Program counter
 	push r12  #; Stack pointer
 	push r13  #; Register base
+	push r15  #; Counter from INSTRUCTION_PERIOD to 0
+	#; Not sure why, but SDL calls seem to fail unless stack is aligned to 16
+	sub rsp, 8
 	mov rbx, PROGRAM_START
 	lea r12, program_stack[rip]
 	lea r13, program_regs[rip]
+	mov r15, INSTRUCTION_PERIOD
 ep_loop:
+	dec r15
+	jnz ep_parseop
+	mov r15, INSTRUCTION_PERIOD
 	#; Sleep a bit to emulate CHIP-8's processor speed
 	mov edi, FRAME_DELAY
 	call SDL_Delay@PLT
@@ -337,6 +347,7 @@ ep_pollevent:
 	cmp byte ptr event[rip], SDL_QUIT
 	je ep_quit
 	call savekey
+
 ep_parseop:
 	lea rsi, program[rip]
 	movzx rax, word ptr [rsi+rbx]
@@ -751,6 +762,8 @@ ep_opf:
 		rep movsb
 		jmp ep_loop
 ep_quit:
+	add rsp, 8
+	pop r15
 	pop r13
 	pop r12
 	pop rbx
