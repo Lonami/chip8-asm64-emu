@@ -674,6 +674,7 @@ ep_opf:
 		lea rsi, program[rip]
 		add rsi, rax
 		lea rdi, program_regs[rip]
+		inc rcx
 		rep movsb
 		jmp ep_loop
 
@@ -759,6 +760,7 @@ ep_opf:
 		movzx rax, word ptr program_regi[rip]
 		lea rdi, program[rip]
 		add rdi, rax
+		inc rcx
 		rep movsb
 		jmp ep_loop
 ep_quit:
