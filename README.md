@@ -7,10 +7,9 @@ on with [Cowgod's Manual](http://devernay.free.fr/hacks/chip8/C8TECH10.HTM).
 
 The emulator is written in a single `main.s` assembly file and graphics are
 rendered to screen through the help of [SDL](https://www.libsdl.org/), which
-you need if you want to compile. The emulator was written for a 64 bits
-platform under Linux, and assumes the machine under which is running loads
-data from memory in little-endian (primarily to swap two bytes, as the CHIP-8
-is a big-endian machine), which is often the case.
+you need if you want to compile. The emulator was written for the x86-64
+platform under Linux (important to note that the data is stored in memory
+as little-endian, primarily to swap two bytes, as the CHIP-8 uses big-endian).
 
 The file is heavily commented, so you should be able to follow along even
 if you have little experience with assembly, and I hope it can teach people
@@ -34,7 +33,7 @@ I do not own any of the ROMs available in the `roms/` folder, which were
 picked up from other several websites hosting them, neither I do own the
 text written by Thomas P. Greene `CHIP8-TECHNICAL.txt`.
 
-An amazing reference on calling conventions (and more) for 64 bits platforms
-is available at http://wiki.osdev.org/System_V_ABI#x86-64.
+An amazing reference on calling conventions (and more) for the x86-64
+platform is available at http://wiki.osdev.org/System_V_ABI#x86-64.
 
 You can find most of the used SDL methods on https://wiki.libsdl.org/.
