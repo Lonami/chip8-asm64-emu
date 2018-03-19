@@ -127,7 +127,7 @@ audiocallback:
 	mov rcx, rdx
 ac_fillbuffer:
 	stosb
-	inc al
+	add al, 1
 	loop ac_fillbuffer
 ac_done:
 	ret
@@ -143,7 +143,7 @@ savekey:
 	je sk_process
 	cmp ah, SDL_KEYUP
 	je sk_process
-	mov ax, 0
+	xor ax, ax
 	jmp sk_exit
 sk_process:
 	mov edx, event[rip+8]
@@ -193,7 +193,7 @@ sk_isupper:
 	cmp al, 'V'
 	je sk_keyf
 	#; No valid key pressed, consider no event at all.
-	mov ax, 0
+	xor ax, ax
 	jmp sk_exit
 sk_key0:
 	mov al, 0x0
@@ -247,7 +247,7 @@ sk_done:
 	#; Update the keys bitset
 	mov cl, al
 	#; Note that we must return from 1..16, but shift from 0..15 times.
-	inc al
+	add al, 1
 	mov dx, 1
 	shl dx, cl
 	cmp ah, SDL_KEYUP
@@ -293,15 +293,15 @@ drawbuffer:
 			jnz db_shiftloop
 		#; y += 1
 		add word ptr rect[rip+2], PX_MULT
-		inc rbx
+		add rbx, 1
 		cmp rbx, 32
 		jne db_loop
 	#; Update the whole screen.
 	mov rdi, screen[rip]
-	mov esi, 0
-	mov edx, 0
-	mov ecx, 0
-	mov r8d, 0
+	xor esi, esi
+	xor edx, edx
+	xor ecx, ecx
+	xor r8d, r8d
 	call SDL_UpdateRect@PLT
 	pop r15
 	pop r12
@@ -674,7 +674,7 @@ ep_opf:
 		lea rsi, program[rip]
 		add rsi, rax
 		lea rdi, program_regs[rip]
-		inc rcx
+		add rcx, 1
 		rep movsb
 		jmp ep_loop
 
@@ -760,7 +760,7 @@ ep_opf:
 		movzx rax, word ptr program_regi[rip]
 		lea rdi, program[rip]
 		add rdi, rax
-		inc rcx
+		add rcx, 1
 		rep movsb
 		jmp ep_loop
 ep_quit:
@@ -800,7 +800,7 @@ main:
 	call fread@PLT
 
 	#; Initialize the RNG so we can call rand()
-	mov edi, 0
+	xor edi, edi
 	xor eax, eax
 	call time@PLT
 	mov edi, eax
@@ -867,7 +867,7 @@ error:
 	jmp .exit
 
 exit:
-	mov eax, 0
+	xor eax, eax
 .exit:
 	#; Leave the activation frame, and return the main function exiting
 	leave
