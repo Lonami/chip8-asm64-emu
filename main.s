@@ -122,7 +122,7 @@ audiocallback:
 	test byte ptr program_sound_timer[rip], 0xff
 	jz ac_done
 	#; al holds the saw wave, which goes up to 255 and then overflows to 0.
-	xor al, 0
+	xor al, al
 	mov rdi, rsi
 	mov rcx, rdx
 ac_fillbuffer:
