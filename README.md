@@ -1,3 +1,7 @@
+Moved to https://codeberg.org/Lonami/chip8-asm64-emu. The GitHub repository may be deleted in the future.
+
+---
+
 CHIP-8 64-bits assembly emulator
 ================================
 
